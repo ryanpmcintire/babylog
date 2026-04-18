@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-nunito), system-ui, sans-serif;
+
+  --color-sage-50: #f1f5ee;
+  --color-sage-100: #dde6d6;
+  --color-sage-200: #bdcfb2;
+  --color-sage-300: #97b18a;
+  --color-sage-400: #789568;
+  --color-sage-500: #5e7c4e;
+  --color-sage-600: #4a633c;
+  --color-sage-700: #3a4d30;
+  --color-sage-800: #2f3e28;
+  --color-sage-900: #273321;
+
+  --color-cream-50: #fefaf3;
+  --color-cream-100: #fbf3e2;
+  --color-cream-200: #f6e6c2;
+  --color-cream-300: #eed59b;
+
+  --color-rose-300: #e3b5b5;
+  --color-rose-400: #d19a9a;
+  --color-rose-500: #bd7d7d;
+  --color-rose-600: #a56363;
+  --color-rose-700: #844f4f;
+
+  --color-ink-500: #6b625b;
+  --color-ink-700: #3d3734;
+  --color-ink-800: #2b2724;
+  --color-ink-900: #1c1917;
+}
+
+:root {
+  --background: var(--color-cream-50);
+  --foreground: var(--color-ink-800);
+  --surface: #ffffff;
+  --accent: var(--color-sage-600);
+  --accent-soft: var(--color-sage-100);
+  --muted: var(--color-ink-500);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: var(--color-ink-900);
+    --foreground: var(--color-cream-100);
+    --surface: var(--color-ink-800);
+    --accent: var(--color-sage-300);
+    --accent-soft: var(--color-sage-800);
+    --muted: #a79e95;
+    color-scheme: dark;
+  }
+}
+
+:root.dark {
+  --background: var(--color-ink-900);
+  --foreground: var(--color-cream-100);
+  --surface: var(--color-ink-800);
+  --accent: var(--color-sage-300);
+  --accent-soft: var(--color-sage-800);
+  --muted: #a79e95;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-muted: var(--muted);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
