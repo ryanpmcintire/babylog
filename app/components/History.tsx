@@ -4,6 +4,11 @@ import { useMemo } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { sideLabel } from "@/lib/events";
 import { formatLiveElapsed, formatVolume } from "@/lib/format";
+import { softDeleteEvent } from "@/lib/useEvents";
+import { useAuth } from "../providers";
+import { SwipeableRow } from "./SwipeableRow";
+
+const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type HistoryRow =
   | { kind: "event"; at: Date; event: BabyEvent }
@@ -128,6 +133,7 @@ function buildRows(events: BabyEvent[]): HistoryRow[] {
 }
 
 export function History({ events }: { events: BabyEvent[] }) {
+  const { user } = useAuth();
   const groups = useMemo(() => {
     const rows = buildRows(events);
     const byDay = new Map<string, { label: string; rows: HistoryRow[] }>();
@@ -159,10 +165,22 @@ export function History({ events }: { events: BabyEvent[] }) {
       {groups.map((g) => (
         <section key={g.label} className="w-full flex flex-col gap-2">
           <p className="text-xs font-semibold text-muted px-1">{g.label}</p>
-          <div className="rounded-2xl border border-accent-soft bg-surface divide-y divide-accent-soft">
-            {g.rows.map((row, idx) => (
-              <HistoryItem key={rowKey(row, idx)} row={row} />
-            ))}
+          <div className="overflow-hidden rounded-2xl border border-accent-soft bg-surface divide-y divide-accent-soft">
+            {g.rows.map((row, idx) => {
+              const canDelete = canUserDelete(row, user?.uid);
+              const item = <HistoryItem row={row} />;
+              if (row.kind === "event" && canDelete) {
+                return (
+                  <SwipeableRow
+                    key={rowKey(row, idx)}
+                    onDelete={() => softDeleteEvent(row.event.id)}
+                  >
+                    {item}
+                  </SwipeableRow>
+                );
+              }
+              return <div key={rowKey(row, idx)}>{item}</div>;
+            })}
           </div>
         </section>
       ))}
@@ -173,6 +191,13 @@ export function History({ events }: { events: BabyEvent[] }) {
 function rowKey(row: HistoryRow, idx: number): string {
   if (row.kind === "event") return row.event.id;
   return `sleep-${row.startedAt.getTime()}-${idx}`;
+}
+
+function canUserDelete(row: HistoryRow, uid: string | undefined): boolean {
+  if (!uid) return false;
+  if (row.kind !== "event") return false;
+  const ageMs = Date.now() - row.event.occurred_at.toDate().getTime();
+  return ageMs >= 0 && ageMs <= EDIT_WINDOW_MS;
 }
 
 function HistoryItem({ row }: { row: HistoryRow }) {

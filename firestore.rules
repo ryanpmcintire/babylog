@@ -19,7 +19,6 @@ service cloud.firestore {
         && request.resource.data.created_by == request.auth.uid;
 
       allow update, delete: if isHouseholdMember()
-        && resource.data.created_by == request.auth.uid
         && (request.time.toMillis() - resource.data.occurred_at.toMillis()) < 24 * 60 * 60 * 1000;
     }
 
