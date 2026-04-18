@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import type { BabyEvent } from "@/lib/events";
+import { sideLabel } from "@/lib/events";
 import { formatLiveElapsed, formatVolume } from "@/lib/format";
 
 type HistoryRow =
@@ -22,16 +23,19 @@ function firstName(email: string | null | undefined): string {
 
 function describe(event: BabyEvent): { label: string; detail?: string } {
   switch (event.type) {
-    case "breast_feed":
+    case "breast_feed": {
+      const outcomeText =
+        event.outcome === "latched_fed"
+          ? "latched & fed"
+          : event.outcome === "latched_brief"
+            ? "latched briefly"
+            : "didn't latch";
+      const side = sideLabel(event.side);
       return {
         label: "Breast feed",
-        detail:
-          event.outcome === "latched_fed"
-            ? "latched & fed"
-            : event.outcome === "latched_brief"
-              ? "latched briefly"
-              : "didn't latch",
+        detail: side ? `${side} · ${outcomeText}` : outcomeText,
       };
+    }
     case "bottle_feed":
       return {
         label: "Bottle",
@@ -44,8 +48,15 @@ function describe(event: BabyEvent): { label: string; detail?: string } {
             )
             .join(" + "),
       };
-    case "pump":
-      return { label: "Pump", detail: formatVolume(event.volume_ml) };
+    case "pump": {
+      const side = sideLabel(event.side);
+      return {
+        label: "Pump",
+        detail: side
+          ? `${side} · ${formatVolume(event.volume_ml)}`
+          : formatVolume(event.volume_ml),
+      };
+    }
     case "diaper_wet":
       return { label: "Wet diaper" };
     case "diaper_dirty":

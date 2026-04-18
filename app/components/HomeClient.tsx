@@ -1,20 +1,37 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRecentEvents } from "@/lib/useEvents";
+import type { Side } from "@/lib/events";
 import { Dashboard, isCurrentlySleeping } from "./Dashboard";
 import { ActionGrid } from "./ActionGrid";
+import { SleepControl } from "./SleepControl";
 import { BackdateSheet } from "./BackdateSheet";
 import { Timeline } from "./Timeline";
 import { Trends } from "./Trends";
 import { History } from "./History";
 import { SignOutButton } from "./SignOutButton";
 
+function suggestNextBreastSide(events: { type: string; side?: Side }[]): Side | undefined {
+  for (const e of events) {
+    if (e.type === "breast_feed" && e.side) {
+      if (e.side === "left") return "right";
+      if (e.side === "right") return "left";
+      return "left"; // last was 'both' — default to left
+    }
+  }
+  return undefined;
+}
+
 export function HomeClient() {
   const { events, loading, error } = useRecentEvents();
   const sleeping = isCurrentlySleeping(events);
   const [backdateOpen, setBackdateOpen] = useState(false);
+  const suggestedBreastSide = useMemo(
+    () => suggestNextBreastSide(events),
+    [events],
+  );
 
   return (
     <main className="flex flex-1 flex-col items-center px-4 py-8 sm:py-12">
@@ -25,7 +42,12 @@ export function HomeClient() {
           <p className="text-center text-xs text-rose-600">{error}</p>
         )}
 
-        <ActionGrid sleeping={sleeping} />
+        <SleepControl events={events} />
+
+        <ActionGrid
+          sleeping={sleeping}
+          suggestedBreastSide={suggestedBreastSide}
+        />
 
         <button
           type="button"
@@ -58,6 +80,7 @@ export function HomeClient() {
       {backdateOpen && (
         <BackdateSheet
           sleeping={sleeping}
+          suggestedBreastSide={suggestedBreastSide}
           onClose={() => setBackdateOpen(false)}
         />
       )}

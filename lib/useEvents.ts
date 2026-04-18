@@ -4,15 +4,17 @@ import { useEffect, useState } from "react";
 import {
   addDoc,
   collection,
+  doc,
   limit,
   onSnapshot,
   orderBy,
   query,
   Timestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { getDb, getFirebaseAuth } from "./firebase";
-import type { BabyEvent, BreastFeedOutcome, MilkType } from "./events";
+import type { BabyEvent, BreastFeedOutcome, MilkType, Side } from "./events";
 
 export function useRecentEvents(
   days = 30,
@@ -64,9 +66,9 @@ export function useRecentEvents(
 }
 
 export type NewEventPayload =
-  | { type: "breast_feed"; outcome: BreastFeedOutcome }
+  | { type: "breast_feed"; outcome: BreastFeedOutcome; side: Side }
   | { type: "bottle_feed"; volume_ml: number; milk_types: MilkType[] }
-  | { type: "pump"; volume_ml: number }
+  | { type: "pump"; volume_ml: number; side: Side }
   | { type: "diaper_wet" }
   | { type: "diaper_dirty" }
   | { type: "sleep_start" }
@@ -75,7 +77,7 @@ export type NewEventPayload =
 export async function writeEvent(
   payload: NewEventPayload,
   occurredAt?: Date,
-): Promise<void> {
+): Promise<string> {
   const auth = getFirebaseAuth();
   const user = auth.currentUser;
   if (!user) throw new Error("Not signed in");
@@ -84,12 +86,21 @@ export async function writeEvent(
   const now = occurredAt ?? new Date();
   const nowTs = Timestamp.fromDate(now);
 
-  await addDoc(collection(db, "events"), {
+  const ref = await addDoc(collection(db, "events"), {
     ...payload,
     occurred_at: nowTs,
     created_by: user.uid,
     created_by_email: user.email ?? null,
     created_at: nowTs,
     deleted: false,
+  });
+  return ref.id;
+}
+
+export async function softDeleteEvent(id: string): Promise<void> {
+  const db = getDb();
+  await updateDoc(doc(db, "events", id), {
+    deleted: true,
+    updated_at: Timestamp.now(),
   });
 }

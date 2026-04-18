@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
 
-const RANGE_OPTIONS = [7, 14, 30];
+const RANGE_OPTIONS = [3, 7, 14, 30];
 
 export function Trends({ events }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);

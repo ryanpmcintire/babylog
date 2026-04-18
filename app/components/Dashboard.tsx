@@ -34,7 +34,19 @@ function deriveState(events: BabyEvent[]): Derived {
             : e.outcome === "latched_brief"
               ? "latched briefly"
               : "didn't latch";
-        lastFeed = { summary: `Breast · ${outcomeLabel}`, at };
+        const side = e.side
+          ? e.side === "both"
+            ? "L+R"
+            : e.side === "left"
+              ? "L"
+              : "R"
+          : "";
+        lastFeed = {
+          summary: side
+            ? `Breast (${side}) · ${outcomeLabel}`
+            : `Breast · ${outcomeLabel}`,
+          at,
+        };
       }
     }
     if (

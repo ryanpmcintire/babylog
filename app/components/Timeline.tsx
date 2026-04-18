@@ -10,10 +10,14 @@ import {
   type SleepSegment,
 } from "@/lib/aggregates";
 
-const ROW_HEIGHT = 40;
-const PAD_Y = 8;
 const AXIS_TICKS = [0, 6, 12, 18, 24];
 const TIMELINE_RANGES = [3, 7, 14, 30];
+
+function rowMetrics(days: number): { rowHeight: number; padY: number } {
+  if (days <= 7) return { rowHeight: 40, padY: 8 };
+  if (days <= 14) return { rowHeight: 26, padY: 4 };
+  return { rowHeight: 18, padY: 3 };
+}
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -36,7 +40,7 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
 
   const dayList = useMemo(() => {
     const out: { date: Date; key: string; label: string }[] = [];
-    for (let i = days - 1; i >= 0; i--) {
+    for (let i = 0; i < days; i++) {
       const d = new Date(now);
       d.setDate(d.getDate() - i);
       const day = startOfDay(d);
@@ -104,6 +108,7 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
             label={d.label}
             sleeps={sleepByDay.get(d.key) ?? []}
             markers={markersByDay.get(d.key) ?? []}
+            days={days}
           />
         ))}
       </div>
@@ -111,13 +116,20 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
   );
 }
 
+const MARKER_COLORS = {
+  sleep: "var(--color-sage-400)",
+  feed: "#bd7d7d", // rose — warm, distinct from sleep green
+  diaper: "#c49b5b", // amber — distinct earthy tone
+  pump: "#7b8ea3", // slate — distinct cool tone
+};
+
 function Legend() {
   return (
     <div className="flex gap-3 flex-wrap text-[10px] text-muted">
-      <LegendDot color="var(--color-sage-400)" label="sleep" />
-      <LegendDot color="var(--color-accent)" label="feed" />
-      <LegendDot color="var(--color-rose-400)" label="diaper" />
-      <LegendDot color="var(--color-cream-300)" label="pump" />
+      <LegendDot color={MARKER_COLORS.sleep} label="sleep" />
+      <LegendDot color={MARKER_COLORS.feed} label="feed" />
+      <LegendDot color={MARKER_COLORS.diaper} label="diaper" />
+      <LegendDot color={MARKER_COLORS.pump} label="pump" />
     </div>
   );
 }
@@ -154,16 +166,18 @@ function DayRow({
   label,
   sleeps,
   markers,
+  days,
 }: {
   label: string;
   sleeps: SleepSegment[];
   markers: Marker[];
+  days: number;
 }) {
+  const { rowHeight, padY } = rowMetrics(days);
   return (
-    <div className="flex items-center" style={{ height: ROW_HEIGHT }}>
-      <div className="w-10 text-[10px] text-muted">{label}</div>
+    <div className="flex items-center" style={{ height: rowHeight }}>
+      <div className="w-10 text-[10px] text-muted truncate">{label}</div>
       <div className="relative flex-1 h-full">
-        {/* faint vertical gridlines */}
         {AXIS_TICKS.slice(1, -1).map((h) => (
           <span
             key={h}
@@ -179,8 +193,8 @@ function DayRow({
             style={{
               left: `${(s.startMin / 1440) * 100}%`,
               width: `${((s.endMin - s.startMin) / 1440) * 100}%`,
-              top: PAD_Y,
-              bottom: PAD_Y,
+              top: padY,
+              bottom: padY,
               background: "var(--color-sage-400)",
               opacity: s.ongoing ? 0.55 : 0.9,
             }}
@@ -189,25 +203,28 @@ function DayRow({
         ))}
 
         {markers.map((m, i) => (
-          <MarkerDot key={`m${i}`} marker={m} />
+          <MarkerDot key={`m${i}`} marker={m} days={days} />
         ))}
       </div>
     </div>
   );
 }
 
-function MarkerDot({ marker }: { marker: Marker }) {
+function MarkerDot({ marker, days }: { marker: Marker; days: number }) {
   const color =
     marker.kind === "breast" || marker.kind === "bottle"
-      ? "var(--color-accent)"
+      ? MARKER_COLORS.feed
       : marker.kind === "pump"
-        ? "var(--color-cream-300)"
-        : "var(--color-rose-400)";
+        ? MARKER_COLORS.pump
+        : MARKER_COLORS.diaper;
 
-  const size =
-    marker.kind === "pump" || marker.kind === "diaper_wet" || marker.kind === "diaper_dirty"
+  const baseSize =
+    marker.kind === "pump" ||
+    marker.kind === "diaper_wet" ||
+    marker.kind === "diaper_dirty"
       ? 7
       : 9;
+  const size = days <= 7 ? baseSize : days <= 14 ? baseSize - 2 : baseSize - 3;
 
   return (
     <span

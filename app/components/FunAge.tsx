@@ -38,6 +38,7 @@ export function FunAge() {
   const totalMinutes = Math.floor(ms / 60000);
   const days = ms / 86400000;
   const wholeDays = Math.floor(days);
+  const dayFraction = days - wholeDays;
 
   const mode = MODE_ORDER[modeIdx % MODE_ORDER.length]!;
 
@@ -52,13 +53,15 @@ export function FunAge() {
       aria-label="Tap to show a different unit"
       className="flex flex-col items-center gap-1 text-muted hover:text-foreground transition"
     >
-      {mode === "tally" && <TallyMarks days={wholeDays} />}
+      {mode === "tally" && (
+        <TallyMarks days={wholeDays} fraction={dayFraction} />
+      )}
       {mode === "minutes" && (
         <StatLine
           value={`${totalMinutes.toLocaleString()}m ${(totalSeconds % 60)
             .toString()
             .padStart(2, "0")}s`}
-          unit="alive"
+          unit="since birth"
         />
       )}
       {mode === "heartbeats" && (
@@ -105,58 +108,85 @@ function StatLine({ value, unit }: { value: string; unit: string }) {
   );
 }
 
-function TallyMarks({ days }: { days: number }) {
-  const groups = Math.floor(days / 5);
-  const remainder = days % 5;
-  const groupArr = Array.from({ length: groups }, () => 5);
-  if (remainder > 0) groupArr.push(remainder);
+function TallyMarks({
+  days,
+  fraction,
+}: {
+  days: number;
+  fraction: number;
+}) {
+  // Completed days as full-height marks, plus one partial for the in-progress day.
+  const heights: number[] = Array.from({ length: days }, () => 1);
+  const hasPartial = fraction > 0;
+  if (hasPartial) heights.push(fraction);
+
+  const groups: number[][] = [];
+  for (let i = 0; i < heights.length; i += 5) {
+    groups.push(heights.slice(i, i + 5));
+  }
 
   return (
     <span className="flex items-center gap-1.5">
-      <span className="flex flex-wrap items-center gap-1.5 max-w-[220px] justify-center">
-        {groupArr.map((count, i) => (
-          <TallyGroup key={i} count={count} />
-        ))}
+      <span className="flex flex-wrap items-center gap-1.5 max-w-[240px] justify-center">
+        {groups.length === 0 && hasPartial === false ? (
+          <span className="text-[10px] text-muted">—</span>
+        ) : (
+          groups.map((g, i) => <TallyGroup key={i} heights={g} />)
+        )}
       </span>
       <span className="text-[10px] text-muted whitespace-nowrap">
-        {days === 1 ? "day" : "days"}
+        {days === 0 && hasPartial
+          ? "day 1"
+          : days === 1 && !hasPartial
+            ? "day"
+            : "days"}
       </span>
     </span>
   );
 }
 
-function TallyGroup({ count }: { count: number }) {
+function TallyGroup({ heights }: { heights: number[] }) {
   const barWidth = 3;
   const barGap = 3;
   const barHeight = 18;
-  const groupWidth = 4 * barWidth + 3 * barGap + 6;
+  const bars = heights.slice(0, 5);
+  const groupWidth =
+    bars.length * barWidth + Math.max(0, bars.length - 1) * barGap + 4;
   const stroke = "var(--color-accent)";
+  const isFullFive = bars.length === 5 && bars.every((h) => h >= 0.999);
 
   return (
     <svg
-      width={count === 5 ? groupWidth : count * barWidth + (count - 1) * barGap}
+      width={groupWidth}
       height={barHeight + 4}
       viewBox={`0 0 ${groupWidth} ${barHeight + 4}`}
       aria-hidden="true"
     >
-      {Array.from({ length: Math.min(count, 4) }).map((_, i) => (
+      {bars.map((h, i) => {
+        const clamped = Math.max(0, Math.min(1, h));
+        const top = 2 + barHeight * (1 - clamped);
+        const bottom = barHeight + 2;
+        const cx = i * (barWidth + barGap) + barWidth / 2 + 2;
+        return (
+          <line
+            key={i}
+            x1={cx}
+            x2={cx}
+            y1={top}
+            y2={bottom}
+            stroke={stroke}
+            strokeWidth={barWidth}
+            strokeLinecap="round"
+            opacity={clamped < 1 ? 0.55 : 1}
+          />
+        );
+      })}
+      {isFullFive && (
         <line
-          key={i}
-          x1={i * (barWidth + barGap) + barWidth / 2}
-          x2={i * (barWidth + barGap) + barWidth / 2}
-          y1={2}
-          y2={barHeight + 2}
-          stroke={stroke}
-          strokeWidth={barWidth}
-          strokeLinecap="round"
-        />
-      ))}
-      {count === 5 && (
-        <line
-          x1={-1}
-          x2={4 * (barWidth + barGap) + 1}
-          y1={barHeight * 0.75}
-          y2={barHeight * 0.3}
+          x1={2}
+          x2={2 + 4 * (barWidth + barGap) + barWidth}
+          y1={barHeight * 0.8 + 2}
+          y2={barHeight * 0.2 + 2}
           stroke={stroke}
           strokeWidth={barWidth - 0.5}
           strokeLinecap="round"

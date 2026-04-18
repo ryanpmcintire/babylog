@@ -16,6 +16,19 @@ export type BreastFeedOutcome =
 
 export type MilkType = "mom_pumped" | "donor" | "formula";
 
+export type Side = "left" | "right" | "both";
+
+export const SIDES: { value: Side; label: string; short: string }[] = [
+  { value: "left", label: "Left", short: "L" },
+  { value: "right", label: "Right", short: "R" },
+  { value: "both", label: "Both", short: "L+R" },
+];
+
+export function sideLabel(side: Side | undefined): string {
+  if (!side) return "";
+  return side === "left" ? "L" : side === "right" ? "R" : "L+R";
+}
+
 type BaseEvent = {
   id: string;
   created_by: string;
@@ -28,9 +41,9 @@ type BaseEvent = {
 
 export type BabyEvent = BaseEvent &
   (
-    | { type: "breast_feed"; outcome: BreastFeedOutcome }
+    | { type: "breast_feed"; outcome: BreastFeedOutcome; side?: Side }
     | { type: "bottle_feed"; volume_ml: number; milk_types: MilkType[] }
-    | { type: "pump"; volume_ml: number }
+    | { type: "pump"; volume_ml: number; side?: Side }
     | { type: "diaper_wet" }
     | { type: "diaper_dirty" }
     | { type: "sleep_start" }
