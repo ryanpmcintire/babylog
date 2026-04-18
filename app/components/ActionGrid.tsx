@@ -238,11 +238,19 @@ function BottlePanel({
   onLog: (p: NewEventPayload, c: string) => Promise<void>;
 }) {
   const [milk, setMilk] = useState<MilkType[]>(["mom_pumped"]);
+  const [selectedMl, setSelectedMl] = useState<number | null>(null);
   const [customMl, setCustomMl] = useState("");
 
   useEffect(() => {
     setMilk(readLastMilkTypes());
   }, []);
+
+  const effectiveMl =
+    selectedMl != null
+      ? selectedMl
+      : customMl && Number(customMl) > 0
+        ? Number(customMl)
+        : null;
 
   function toggleMilk(m: MilkType) {
     setMilk((cur) => {
@@ -251,12 +259,12 @@ function BottlePanel({
     });
   }
 
-  function submit(volume_ml: number) {
-    if (!Number.isFinite(volume_ml) || volume_ml <= 0) return;
+  function confirm() {
+    if (effectiveMl == null || effectiveMl <= 0) return;
     writeLastMilkTypes(milk);
     onLog(
-      { type: "bottle_feed", volume_ml, milk_types: milk },
-      `Bottle logged: ${formatVolume(volume_ml)}`,
+      { type: "bottle_feed", volume_ml: effectiveMl, milk_types: milk },
+      `Bottle logged: ${formatVolume(effectiveMl)}`,
     );
   }
 
@@ -291,22 +299,38 @@ function BottlePanel({
 
         <div>
           <p className="text-xs uppercase tracking-wider text-muted mb-2">
-            Volume — tap to log
+            Volume
           </p>
           <div className="grid grid-cols-3 gap-2">
-            {VOLUME_PRESETS_ML.map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => submit(v)}
-                className="min-h-[64px] rounded-2xl bg-accent/10 border border-accent-soft text-foreground font-semibold active:scale-[0.98] flex flex-col items-center justify-center"
-              >
-                <span className="text-lg">{v} ml</span>
-                <span className="text-[10px] text-muted">
-                  {mlToOz(v)} oz
-                </span>
-              </button>
-            ))}
+            {VOLUME_PRESETS_ML.map((v) => {
+              const active = selectedMl === v && !customMl;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => {
+                    setSelectedMl(v);
+                    setCustomMl("");
+                  }}
+                  className={
+                    "min-h-[64px] rounded-2xl font-semibold active:scale-[0.98] flex flex-col items-center justify-center border transition " +
+                    (active
+                      ? "bg-accent text-white border-accent"
+                      : "bg-surface text-foreground border-accent-soft")
+                  }
+                >
+                  <span className="text-lg">{v} ml</span>
+                  <span
+                    className={
+                      "text-[10px] " +
+                      (active ? "text-white/80" : "text-muted")
+                    }
+                  >
+                    {mlToOz(v)} oz
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -314,31 +338,31 @@ function BottlePanel({
           <p className="text-xs uppercase tracking-wider text-muted mb-2">
             Custom
           </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit(Number(customMl));
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            placeholder="ml"
+            value={customMl}
+            onChange={(e) => {
+              setCustomMl(e.target.value);
+              if (e.target.value) setSelectedMl(null);
             }}
-            className="flex gap-2"
-          >
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              placeholder="ml"
-              value={customMl}
-              onChange={(e) => setCustomMl(e.target.value)}
-              className="flex-1 rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-            <button
-              type="submit"
-              className="rounded-2xl bg-accent px-4 py-3 text-base font-semibold text-white active:scale-[0.98]"
-            >
-              Log
-            </button>
-          </form>
+            className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          />
         </div>
+
+        <button
+          type="button"
+          onClick={confirm}
+          disabled={effectiveMl == null || effectiveMl <= 0}
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {effectiveMl
+            ? `Log ${formatVolume(effectiveMl)}`
+            : "Pick a volume"}
+        </button>
       </div>
     </Sheet>
   );
@@ -351,13 +375,21 @@ function PumpPanel({
   onClose: () => void;
   onLog: (p: NewEventPayload, c: string) => Promise<void>;
 }) {
+  const [selectedMl, setSelectedMl] = useState<number | null>(null);
   const [customMl, setCustomMl] = useState("");
 
-  function submit(volume_ml: number) {
-    if (!Number.isFinite(volume_ml) || volume_ml <= 0) return;
+  const effectiveMl =
+    selectedMl != null
+      ? selectedMl
+      : customMl && Number(customMl) > 0
+        ? Number(customMl)
+        : null;
+
+  function confirm() {
+    if (effectiveMl == null || effectiveMl <= 0) return;
     onLog(
-      { type: "pump", volume_ml },
-      `Pump logged: ${formatVolume(volume_ml)}`,
+      { type: "pump", volume_ml: effectiveMl },
+      `Pump logged: ${formatVolume(effectiveMl)}`,
     );
   }
 
@@ -366,22 +398,38 @@ function PumpPanel({
       <div className="flex flex-col gap-4">
         <div>
           <p className="text-xs uppercase tracking-wider text-muted mb-2">
-            Volume — tap to log
+            Volume
           </p>
           <div className="grid grid-cols-3 gap-2">
-            {VOLUME_PRESETS_ML.map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => submit(v)}
-                className="min-h-[64px] rounded-2xl bg-accent/10 border border-accent-soft text-foreground font-semibold active:scale-[0.98] flex flex-col items-center justify-center"
-              >
-                <span className="text-lg">{v} ml</span>
-                <span className="text-[10px] text-muted">
-                  {mlToOz(v)} oz
-                </span>
-              </button>
-            ))}
+            {VOLUME_PRESETS_ML.map((v) => {
+              const active = selectedMl === v && !customMl;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => {
+                    setSelectedMl(v);
+                    setCustomMl("");
+                  }}
+                  className={
+                    "min-h-[64px] rounded-2xl font-semibold active:scale-[0.98] flex flex-col items-center justify-center border transition " +
+                    (active
+                      ? "bg-accent text-white border-accent"
+                      : "bg-surface text-foreground border-accent-soft")
+                  }
+                >
+                  <span className="text-lg">{v} ml</span>
+                  <span
+                    className={
+                      "text-[10px] " +
+                      (active ? "text-white/80" : "text-muted")
+                    }
+                  >
+                    {mlToOz(v)} oz
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -389,31 +437,31 @@ function PumpPanel({
           <p className="text-xs uppercase tracking-wider text-muted mb-2">
             Custom
           </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              submit(Number(customMl));
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            placeholder="ml"
+            value={customMl}
+            onChange={(e) => {
+              setCustomMl(e.target.value);
+              if (e.target.value) setSelectedMl(null);
             }}
-            className="flex gap-2"
-          >
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              step={1}
-              placeholder="ml"
-              value={customMl}
-              onChange={(e) => setCustomMl(e.target.value)}
-              className="flex-1 rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-            <button
-              type="submit"
-              className="rounded-2xl bg-accent px-4 py-3 text-base font-semibold text-white active:scale-[0.98]"
-            >
-              Log
-            </button>
-          </form>
+            className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          />
         </div>
+
+        <button
+          type="button"
+          onClick={confirm}
+          disabled={effectiveMl == null || effectiveMl <= 0}
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {effectiveMl
+            ? `Log ${formatVolume(effectiveMl)}`
+            : "Pick a volume"}
+        </button>
       </div>
     </Sheet>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import {
   buildMarkers,
@@ -13,6 +13,7 @@ import {
 const ROW_HEIGHT = 40;
 const PAD_Y = 8;
 const AXIS_TICKS = [0, 6, 12, 18, 24];
+const TIMELINE_RANGES = [3, 7, 14, 30];
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -29,13 +30,8 @@ function shortDayLabel(d: Date, today: Date): string {
   return d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
-export function Timeline({
-  events,
-  days = 5,
-}: {
-  events: BabyEvent[];
-  days?: number;
-}) {
+export function Timeline({ events }: { events: BabyEvent[] }) {
+  const [days, setDays] = useState(7);
   const now = new Date();
 
   const dayList = useMemo(() => {
@@ -77,14 +73,30 @@ export function Timeline({
 
   return (
     <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
         <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
           Timeline
         </h2>
-        <Legend />
+        <div className="flex gap-1">
+          {TIMELINE_RANGES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setDays(r)}
+              className={
+                "rounded-full px-3 py-1 text-xs font-semibold border transition " +
+                (days === r
+                  ? "bg-accent text-white border-accent"
+                  : "bg-surface text-muted border-accent-soft")
+              }
+            >
+              {r}d
+            </button>
+          ))}
+        </div>
       </div>
-
-      <div className="flex flex-col gap-0">
+      <Legend />
+      <div className="flex flex-col gap-0 mt-2">
         <AxisRow />
         {dayList.map((d) => (
           <DayRow
@@ -101,7 +113,7 @@ export function Timeline({
 
 function Legend() {
   return (
-    <div className="flex gap-3 text-[10px] text-muted">
+    <div className="flex gap-3 flex-wrap text-[10px] text-muted">
       <LegendDot color="var(--color-sage-400)" label="sleep" />
       <LegendDot color="var(--color-accent)" label="feed" />
       <LegendDot color="var(--color-rose-400)" label="diaper" />

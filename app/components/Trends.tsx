@@ -1,16 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
 
-export function Trends({
-  events,
-  days = 7,
-}: {
-  events: BabyEvent[];
-  days?: number;
-}) {
+const RANGE_OPTIONS = [7, 14, 30];
+
+export function Trends({ events }: { events: BabyEvent[] }) {
+  const [days, setDays] = useState(7);
+
   const buckets = useMemo(
     () => buildDailyBuckets(events, days),
     [events, days],
@@ -19,125 +17,161 @@ export function Trends({
   if (events.length === 0) return null;
 
   const milk = buckets.map((b) => b.milkMl);
-  const sleep = buckets.map((b) => b.sleepMinutes / 60);
+  const sleepHrs = buckets.map((b) => b.sleepMinutes / 60);
   const feeds = buckets.map((b) => b.feeds);
   const diapers = buckets.map((b) => b.diapers);
+  const pumpMl = buckets.map((b) => b.pumpMl);
 
   return (
-    <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
-      <h2 className="text-xs uppercase tracking-[0.2em] text-muted mb-3">
-        Last {days} days
-      </h2>
-      <div className="grid grid-cols-2 gap-4">
-        <Spark
-          label="Milk"
-          unit="ml/day"
-          values={milk}
-          buckets={buckets}
-          formatValue={(v) => `${Math.round(v)} ml`}
-        />
-        <Spark
-          label="Sleep"
-          unit="hrs/day"
-          values={sleep}
-          buckets={buckets}
-          formatValue={(v) => `${v.toFixed(1)}h`}
-        />
-        <Spark
-          label="Feeds"
-          unit="per day"
-          values={feeds}
-          buckets={buckets}
-          formatValue={(v) => `${v}`}
-        />
-        <Spark
-          label="Diapers"
-          unit="per day"
-          values={diapers}
-          buckets={buckets}
-          formatValue={(v) => `${v}`}
-        />
+    <div className="w-full flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
+          Daily totals
+        </h2>
+        <div className="flex gap-1">
+          {RANGE_OPTIONS.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setDays(r)}
+              className={
+                "rounded-full px-3 py-1 text-xs font-semibold border transition " +
+                (days === r
+                  ? "bg-accent text-white border-accent"
+                  : "bg-surface text-muted border-accent-soft")
+              }
+            >
+              {r}d
+            </button>
+          ))}
+        </div>
       </div>
+
+      <DailyBars
+        title="Milk in"
+        unit="ml"
+        values={milk}
+        buckets={buckets}
+        formatValue={(v) => (v ? `${Math.round(v)}` : "")}
+      />
+      <DailyBars
+        title="Sleep"
+        unit="hrs"
+        values={sleepHrs}
+        buckets={buckets}
+        formatValue={(v) => (v >= 0.1 ? v.toFixed(1) : "")}
+      />
+      <DailyBars
+        title="Feeds"
+        unit="count"
+        values={feeds}
+        buckets={buckets}
+        formatValue={(v) => (v ? `${v}` : "")}
+      />
+      <DailyBars
+        title="Diapers"
+        unit="count"
+        values={diapers}
+        buckets={buckets}
+        formatValue={(v) => (v ? `${v}` : "")}
+      />
+      <DailyBars
+        title="Pumped"
+        unit="ml"
+        values={pumpMl}
+        buckets={buckets}
+        formatValue={(v) => (v ? `${Math.round(v)}` : "")}
+      />
     </div>
   );
 }
 
-function Spark({
-  label,
+function DailyBars({
+  title,
   unit,
   values,
   buckets,
   formatValue,
 }: {
-  label: string;
+  title: string;
   unit: string;
   values: number[];
   buckets: DayBucket[];
   formatValue: (v: number) => string;
 }) {
-  const width = 160;
-  const height = 60;
-  const padX = 4;
-  const padY = 6;
-  const latest = values[values.length - 1] ?? 0;
   const max = Math.max(1, ...values);
-
-  const points = values.map((v, i) => {
-    const x =
-      padX +
-      (values.length === 1 ? 0 : (i / (values.length - 1)) * (width - padX * 2));
-    const y = height - padY - (v / max) * (height - padY * 2);
-    return { x, y, v, label: buckets[i]?.label ?? "" };
-  });
-
-  const path = points
-    .map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
-    .join(" ");
-
-  const area =
-    points.length > 1
-      ? `${path} L${points[points.length - 1]!.x.toFixed(1)} ${height - padY} L${points[0]!.x.toFixed(1)} ${height - padY} Z`
-      : "";
+  const total = values.reduce((a, b) => a + b, 0);
+  const avg = total / values.length;
 
   return (
-    <div className="flex flex-col">
-      <div className="flex items-baseline justify-between">
-        <span className="text-xs font-semibold text-foreground">{label}</span>
-        <span className="text-[10px] text-muted">{unit}</span>
+    <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
+      <div className="flex items-baseline justify-between mb-3">
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <span className="text-[10px] uppercase tracking-wider text-muted">
+            {unit}/day
+          </span>
+        </div>
+        <span className="text-[10px] text-muted">
+          avg {unit === "count" ? avg.toFixed(1) : Math.round(avg)}
+        </span>
       </div>
-      <div className="text-lg font-bold tabular-nums text-accent">
-        {formatValue(latest)}
-      </div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="none"
-        className="w-full h-[60px] mt-1"
-        aria-label={`${label} trend`}
+
+      <div
+        className="grid gap-[2px] items-end"
+        style={{
+          gridTemplateColumns: `repeat(${values.length}, minmax(0, 1fr))`,
+        }}
       >
-        {area && (
-          <path d={area} fill="var(--color-accent)" opacity="0.12" />
-        )}
-        <path
-          d={path}
-          fill="none"
-          stroke="var(--color-accent)"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {points.map((p, i) => (
-          <circle
-            key={i}
-            cx={p.x}
-            cy={p.y}
-            r={i === points.length - 1 ? 2.6 : 1.6}
-            fill="var(--color-accent)"
-          />
-        ))}
-      </svg>
-      <div className="flex justify-between text-[9px] text-muted mt-0.5 px-0.5">
+        {values.map((v, i) => {
+          const pct = (v / max) * 100;
+          const label = formatValue(v);
+          const isLatest = i === values.length - 1;
+          return (
+            <div key={i} className="flex flex-col items-center">
+              <span
+                className={
+                  "text-[10px] tabular-nums leading-tight h-4 " +
+                  (isLatest ? "text-accent font-bold" : "text-muted")
+                }
+              >
+                {label}
+              </span>
+              <div className="w-full h-[60px] flex items-end">
+                <div
+                  className="w-full rounded-t-md"
+                  style={{
+                    height: `${Math.max(pct, v > 0 ? 4 : 0)}%`,
+                    background: isLatest
+                      ? "var(--color-accent)"
+                      : "var(--color-sage-300)",
+                    opacity: v === 0 ? 0.15 : 1,
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        className="grid gap-[2px] mt-1"
+        style={{
+          gridTemplateColumns: `repeat(${values.length}, minmax(0, 1fr))`,
+        }}
+      >
         {buckets.map((b, i) => (
-          <span key={i}>{b.label}</span>
+          <span
+            key={i}
+            className={
+              "text-[9px] text-center truncate " +
+              (i === buckets.length - 1
+                ? "text-foreground font-semibold"
+                : "text-muted")
+            }
+          >
+            {b.label}
+          </span>
         ))}
       </div>
     </div>

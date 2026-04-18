@@ -14,7 +14,10 @@ import {
 import { getDb, getFirebaseAuth } from "./firebase";
 import type { BabyEvent, BreastFeedOutcome, MilkType } from "./events";
 
-export function useRecentEvents(maxCount = 200): {
+export function useRecentEvents(
+  days = 30,
+  maxCount = 2000,
+): {
   events: BabyEvent[];
   loading: boolean;
   error: string | null;
@@ -25,12 +28,12 @@ export function useRecentEvents(maxCount = 200): {
 
   useEffect(() => {
     const db = getDb();
-    const sevenDaysAgo = Timestamp.fromMillis(
-      Date.now() - 7 * 24 * 60 * 60 * 1000,
+    const windowStart = Timestamp.fromMillis(
+      Date.now() - days * 24 * 60 * 60 * 1000,
     );
     const q = query(
       collection(db, "events"),
-      where("occurred_at", ">=", sevenDaysAgo),
+      where("occurred_at", ">=", windowStart),
       orderBy("occurred_at", "desc"),
       limit(maxCount),
     );
@@ -55,7 +58,7 @@ export function useRecentEvents(maxCount = 200): {
     );
 
     return unsub;
-  }, [maxCount]);
+  }, [maxCount, days]);
 
   return { events, loading, error };
 }

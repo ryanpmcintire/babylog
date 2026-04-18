@@ -3,11 +3,17 @@
 import { useEffect, useState } from "react";
 import { LILY_BIRTHDATE, ageInMs } from "@/lib/age";
 
-const NEWBORN_BPM = 135;
-const NEWBORN_BREATHS_PER_MIN = 42;
+const NEWBORN_BPS = 135 / 60;
+const NEWBORN_BREATHS_PER_SEC = 42 / 60;
 const LUNAR_CYCLE_DAYS = 29.530588;
 
-type Mode = "tally" | "minutes" | "heartbeats" | "breaths" | "moons" | "firstYear";
+type Mode =
+  | "tally"
+  | "minutes"
+  | "heartbeats"
+  | "breaths"
+  | "moons"
+  | "firstYear";
 
 const MODE_ORDER: Mode[] = [
   "tally",
@@ -28,8 +34,10 @@ export function FunAge() {
   }, []);
 
   const ms = ageInMs(LILY_BIRTHDATE, new Date(now));
-  const minutes = Math.floor(ms / 60000);
-  const days = Math.floor(ms / 86400000);
+  const totalSeconds = Math.floor(ms / 1000);
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = ms / 86400000;
+  const wholeDays = Math.floor(days);
 
   const mode = MODE_ORDER[modeIdx % MODE_ORDER.length]!;
 
@@ -44,34 +52,38 @@ export function FunAge() {
       aria-label="Tap to show a different unit"
       className="flex flex-col items-center gap-1 text-muted hover:text-foreground transition"
     >
-      {mode === "tally" && <TallyMarks days={days} />}
+      {mode === "tally" && <TallyMarks days={wholeDays} />}
       {mode === "minutes" && (
         <StatLine
-          value={minutes.toLocaleString()}
-          unit={minutes === 1 ? "minute alive" : "minutes alive"}
+          value={`${totalMinutes.toLocaleString()}m ${(totalSeconds % 60)
+            .toString()
+            .padStart(2, "0")}s`}
+          unit="alive"
         />
       )}
       {mode === "heartbeats" && (
         <StatLine
-          value={Math.round(minutes * NEWBORN_BPM).toLocaleString()}
+          value={Math.round(totalSeconds * NEWBORN_BPS).toLocaleString()}
           unit="heartbeats (est.)"
         />
       )}
       {mode === "breaths" && (
         <StatLine
-          value={Math.round(minutes * NEWBORN_BREATHS_PER_MIN).toLocaleString()}
+          value={Math.round(
+            totalSeconds * NEWBORN_BREATHS_PER_SEC,
+          ).toLocaleString()}
           unit="breaths (est.)"
         />
       )}
       {mode === "moons" && (
         <StatLine
-          value={(days / LUNAR_CYCLE_DAYS).toFixed(3)}
+          value={(days / LUNAR_CYCLE_DAYS).toFixed(5)}
           unit="lunar cycles"
         />
       )}
       {mode === "firstYear" && (
         <StatLine
-          value={((days / 365.25) * 100).toFixed(2) + "%"}
+          value={((days / 365.25) * 100).toFixed(4) + "%"}
           unit="of her first year"
         />
       )}
