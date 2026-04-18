@@ -18,6 +18,8 @@ type HistoryRow =
       startedAt: Date;
       endedAt: Date | null;
       actor: string;
+      startId: string;
+      endId: string | null;
     };
 
 function firstName(email: string | null | undefined): string {
@@ -119,6 +121,8 @@ function buildRows(events: BabyEvent[]): HistoryRow[] {
           startedAt: start.occurred_at.toDate(),
           endedAt: e.occurred_at.toDate(),
           actor: firstName(e.created_by_email),
+          startId: start.id,
+          endId: e.id,
         });
         continue;
       }
@@ -169,11 +173,11 @@ export function History({ events }: { events: BabyEvent[] }) {
             {g.rows.map((row, idx) => {
               const canDelete = canUserDelete(row, user?.uid);
               const item = <HistoryItem row={row} />;
-              if (row.kind === "event" && canDelete) {
+              if (canDelete) {
                 return (
                   <SwipeableRow
                     key={rowKey(row, idx)}
-                    onDelete={() => softDeleteEvent(row.event.id)}
+                    onDelete={() => deleteRow(row)}
                   >
                     {item}
                   </SwipeableRow>
@@ -195,9 +199,23 @@ function rowKey(row: HistoryRow, idx: number): string {
 
 function canUserDelete(row: HistoryRow, uid: string | undefined): boolean {
   if (!uid) return false;
-  if (row.kind !== "event") return false;
-  const ageMs = Date.now() - row.event.occurred_at.toDate().getTime();
+  if (row.kind === "event") {
+    const ageMs = Date.now() - row.event.occurred_at.toDate().getTime();
+    return ageMs >= 0 && ageMs <= EDIT_WINDOW_MS;
+  }
+  // Sleep pair: the start event is older; if its age is within 24h,
+  // the end is automatically within 24h too.
+  const ageMs = Date.now() - row.startedAt.getTime();
   return ageMs >= 0 && ageMs <= EDIT_WINDOW_MS;
+}
+
+async function deleteRow(row: HistoryRow): Promise<void> {
+  if (row.kind === "event") {
+    await softDeleteEvent(row.event.id);
+    return;
+  }
+  await softDeleteEvent(row.startId);
+  if (row.endId) await softDeleteEvent(row.endId);
 }
 
 function HistoryItem({ row }: { row: HistoryRow }) {
