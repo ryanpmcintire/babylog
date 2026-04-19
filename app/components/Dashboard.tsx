@@ -5,6 +5,7 @@ import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
 import { formatElapsed, formatLiveElapsed, formatVolume } from "@/lib/format";
 import type { BabyEvent } from "@/lib/events";
 import { currentSleepState, estimateNextEvent } from "@/lib/aggregates";
+import { maxFeedIntervalHours } from "@/lib/norms";
 import { FunAge } from "./FunAge";
 
 type Derived = {
@@ -147,10 +148,13 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
   const derived = deriveState(events, new Date(now));
   const nextFeed = estimateNextEvent(events, ["breast_feed", "bottle_feed"]);
-  const nextDiaper = estimateNextEvent(events, [
-    "diaper_wet",
-    "diaper_dirty",
-  ]);
+  // Merge wet+dirty events within 15 minutes — they're typically the same change.
+  const nextDiaper = estimateNextEvent(
+    events,
+    ["diaper_wet", "diaper_dirty"],
+    8,
+    15 * 60 * 1000,
+  );
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -234,17 +238,27 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           <p className="text-[10px] uppercase tracking-wider text-muted">
             Predicted next (based on recent intervals)
           </p>
-          {nextFeed && (
-            <Row
-              label="Next feed"
-              value={formatETA(nextFeed.nextAt).text}
-              detail={nextFeed.nextAt.toLocaleTimeString(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-              highlight={formatETA(nextFeed.nextAt).overdue}
-            />
-          )}
+          {nextFeed && (() => {
+            const ageDays = Math.max(
+              0,
+              Math.floor((now - LILY_BIRTHDATE.getTime()) / 86400000),
+            );
+            const maxHours = maxFeedIntervalHours(ageDays);
+            const intervalHours = nextFeed.medianIntervalMs / 3600000;
+            const longGap = intervalHours > maxHours;
+            const time = nextFeed.nextAt.toLocaleTimeString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+            });
+            return (
+              <Row
+                label="Next feed"
+                value={formatETA(nextFeed.nextAt).text}
+                detail={longGap ? `${time} · long gap` : time}
+                highlight={formatETA(nextFeed.nextAt).overdue}
+              />
+            );
+          })()}
           {nextDiaper && (
             <Row
               label="Next diaper"
@@ -274,19 +288,21 @@ function Row({
   highlight?: boolean;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4">
-      <span className="text-sm text-muted">{label}</span>
-      <span className="flex items-baseline gap-2 text-right">
-        {detail && <span className="text-xs text-muted">{detail}</span>}
+    <div className="flex flex-col">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm text-muted">{label}</span>
         <span
           className={
-            "text-lg font-bold tabular-nums " +
+            "text-sm font-medium tabular-nums " +
             (highlight ? "text-accent" : "text-foreground")
           }
         >
           {value}
         </span>
-      </span>
+      </div>
+      {detail && (
+        <div className="text-right text-xs text-muted -mt-0.5">{detail}</div>
+      )}
     </div>
   );
 }

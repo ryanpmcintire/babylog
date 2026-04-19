@@ -14,7 +14,13 @@ import {
   where,
 } from "firebase/firestore";
 import { getDb, getFirebaseAuth } from "./firebase";
-import type { BabyEvent, BreastFeedOutcome, MilkType, Side } from "./events";
+import type {
+  BabyEvent,
+  BreastFeedOutcome,
+  FoodReaction,
+  MilkType,
+  Side,
+} from "./events";
 
 export function useRecentEvents(
   days = 30,
@@ -73,7 +79,21 @@ export type NewEventPayload =
   | { type: "diaper_dirty" }
   | { type: "sleep_start" }
   | { type: "sleep_end" }
-  | { type: "weight"; weight_grams: number; notes?: string };
+  | { type: "weight"; weight_grams: number; notes?: string }
+  | {
+      type: "book_read";
+      title: string;
+      author?: string;
+      cover_url?: string;
+      open_library_key?: string;
+    }
+  | {
+      type: "food_tried";
+      food_name: string;
+      reaction?: FoodReaction;
+      first_try?: boolean;
+      notes?: string;
+    };
 
 export async function writeEvent(
   payload: NewEventPayload,

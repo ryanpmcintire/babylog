@@ -7,7 +7,11 @@ export type EventType =
   | "diaper_wet"
   | "diaper_dirty"
   | "sleep_start"
-  | "sleep_end";
+  | "sleep_end"
+  | "book_read"
+  | "food_tried";
+
+export type FoodReaction = "loved" | "liked" | "neutral" | "disliked";
 
 export type BreastFeedOutcome =
   | "latched_fed"
@@ -49,6 +53,20 @@ export type BabyEvent = BaseEvent &
     | { type: "sleep_start" }
     | { type: "sleep_end" }
     | { type: "weight"; weight_grams: number; notes?: string }
+    | {
+        type: "book_read";
+        title: string;
+        author?: string;
+        cover_url?: string;
+        open_library_key?: string;
+      }
+    | {
+        type: "food_tried";
+        food_name: string;
+        reaction?: FoodReaction;
+        first_try?: boolean;
+        notes?: string;
+      }
   );
 
 export const BREAST_OUTCOMES: {

@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
+import { LILY_BIRTHDATE } from "@/lib/age";
+import { dailySleepNorm } from "@/lib/norms";
 
 const RANGE_OPTIONS = [3, 7, 14, 30];
 
@@ -21,6 +23,12 @@ export function Trends({ events }: { events: BabyEvent[] }) {
   const feeds = buckets.map((b) => b.feeds);
   const diapers = buckets.map((b) => b.diapers);
   const pumpMl = buckets.map((b) => b.pumpMl);
+
+  const ageDays = Math.max(
+    0,
+    Math.floor((Date.now() - LILY_BIRTHDATE.getTime()) / 86400000),
+  );
+  const sleepRef = dailySleepNorm(ageDays);
 
   return (
     <div className="w-full flex flex-col gap-3">
@@ -60,6 +68,8 @@ export function Trends({ events }: { events: BabyEvent[] }) {
         values={sleepHrs}
         buckets={buckets}
         formatValue={(v) => (v >= 0.1 ? v.toFixed(1) : "")}
+        referenceBand={sleepRef}
+        referenceLabel={`typical ${sleepRef.min}-${sleepRef.max}h`}
       />
       <DailyBars
         title="Feeds"
@@ -92,19 +102,30 @@ function DailyBars({
   values,
   buckets,
   formatValue,
+  referenceBand,
+  referenceLabel,
 }: {
   title: string;
   unit: string;
   values: number[];
   buckets: DayBucket[];
   formatValue: (v: number) => string;
+  referenceBand?: { min: number; max: number };
+  referenceLabel?: string;
 }) {
-  const max = Math.max(1, ...values);
+  const max = Math.max(1, ...values, referenceBand ? referenceBand.max : 0);
   const active = values.filter((v) => v > 0);
   const avg =
     active.length > 0
       ? active.reduce((a, b) => a + b, 0) / active.length
       : 0;
+
+  const bandBottomPct = referenceBand
+    ? (referenceBand.min / max) * 100
+    : 0;
+  const bandTopPct = referenceBand
+    ? (referenceBand.max / max) * 100
+    : 0;
 
   return (
     <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
@@ -120,8 +141,23 @@ function DailyBars({
         </span>
       </div>
 
+      <div className="relative">
+        {referenceBand && (
+          <div
+            aria-hidden="true"
+            className="absolute left-0 right-0 pointer-events-none"
+            style={{
+              bottom: `${bandBottomPct}%`,
+              height: `${bandTopPct - bandBottomPct}%`,
+              background: "var(--color-sage-300)",
+              opacity: 0.12,
+              borderTop: "1px dashed var(--divider)",
+              borderBottom: "1px dashed var(--divider)",
+            }}
+          />
+        )}
       <div
-        className="grid gap-[2px] items-end"
+        className="grid gap-[2px] items-end relative"
         style={{
           gridTemplateColumns: `repeat(${values.length}, minmax(0, 1fr))`,
         }}
@@ -156,6 +192,12 @@ function DailyBars({
           );
         })}
       </div>
+      </div>
+      {referenceLabel && (
+        <div className="text-[9px] text-muted text-right mt-0.5">
+          {referenceLabel}
+        </div>
+      )}
 
       <div
         className="grid gap-[2px] mt-1"

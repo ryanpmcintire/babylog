@@ -11,6 +11,7 @@ import { BackdateSheet } from "./BackdateSheet";
 import { Timeline } from "./Timeline";
 import { Trends } from "./Trends";
 import { WeightChart } from "./WeightChart";
+import { Library } from "./Library";
 import { History } from "./History";
 import { SignOutButton } from "./SignOutButton";
 
@@ -67,6 +68,8 @@ export function HomeClient() {
         <WeightChart events={events} />
 
         <Trends events={events} />
+
+        <Library events={events} />
 
         <History events={events} />
 

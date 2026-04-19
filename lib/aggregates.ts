@@ -21,6 +21,10 @@ export type SleepSegment = {
 export const DEFAULT_INFER_BUFFER_MIN = 10;
 export const DEFAULT_FEED_DURATION_MIN = 20;
 export const DIAPER_AWAKE_BUFFER_MIN = 5;
+// After any logged event, assume the baby stays awake this long before sleep
+// could start. Applied uniformly to feeds and diapers.
+export const POST_EVENT_AWAKE_MIN = 20;
+export const PRE_EVENT_AWAKE_MIN = 5;
 // If two awake intervals are within this many minutes of each other,
 // treat them as one continuous awake session instead of a brief sleep-and-wake.
 export const AWAKE_MERGE_THRESHOLD_MIN = 15;
@@ -254,27 +258,26 @@ function subtractRangeFrom(
 
 function buildAwakeIntervals(
   events: BabyEvent[],
-  bufferMin: number,
-  feedDurationMin: number,
+  _bufferMin: number,
+  _feedDurationMin: number,
   mergeThresholdMin: number,
 ): { start: Date; end: Date }[] {
-  const bufferMs = bufferMin * 60 * 1000;
-  const feedDurationMs = feedDurationMin * 60 * 1000;
-  const diaperMs = DIAPER_AWAKE_BUFFER_MIN * 60 * 1000;
+  const preMs = PRE_EVENT_AWAKE_MIN * 60 * 1000;
+  const postMs = POST_EVENT_AWAKE_MIN * 60 * 1000;
   const mergeMs = mergeThresholdMin * 60 * 1000;
 
   const raw: { start: Date; end: Date }[] = [];
   for (const e of events) {
     const atMs = e.occurred_at.toDate().getTime();
-    if (e.type === "breast_feed" || e.type === "bottle_feed") {
+    if (
+      e.type === "breast_feed" ||
+      e.type === "bottle_feed" ||
+      e.type === "diaper_wet" ||
+      e.type === "diaper_dirty"
+    ) {
       raw.push({
-        start: new Date(atMs - bufferMs),
-        end: new Date(atMs + feedDurationMs + bufferMs),
-      });
-    } else if (e.type === "diaper_wet" || e.type === "diaper_dirty") {
-      raw.push({
-        start: new Date(atMs - diaperMs),
-        end: new Date(atMs + diaperMs),
+        start: new Date(atMs - preMs),
+        end: new Date(atMs + postMs),
       });
     }
   }
@@ -448,10 +451,30 @@ export function estimateNextEvent(
   events: BabyEvent[],
   types: BabyEvent["type"][],
   lookbackN: number = 8,
+  mergeWithinMs: number = 0,
 ): { nextAt: Date; medianIntervalMs: number; lastAt: Date } | null {
-  const relevant = events
-    .filter((e) => types.includes(e.type))
-    .slice(0, lookbackN);
+  const filtered = events.filter((e) => types.includes(e.type));
+  // Collapse events that occurred within mergeWithinMs of each other into a
+  // single "session" using the earliest timestamp. Events are in reverse
+  // chrono order.
+  const merged: BabyEvent[] = [];
+  for (const e of filtered) {
+    const last = merged[merged.length - 1];
+    if (
+      mergeWithinMs > 0 &&
+      last &&
+      Math.abs(last.occurred_at.toMillis() - e.occurred_at.toMillis()) <=
+        mergeWithinMs
+    ) {
+      // Keep the earlier of the two so the session anchors on its start.
+      if (e.occurred_at.toMillis() < last.occurred_at.toMillis()) {
+        merged[merged.length - 1] = e;
+      }
+      continue;
+    }
+    merged.push(e);
+  }
+  const relevant = merged.slice(0, lookbackN);
   if (relevant.length < 2) return null;
   const intervals: number[] = [];
   for (let i = 0; i < relevant.length - 1; i++) {

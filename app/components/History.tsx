@@ -74,6 +74,26 @@ function describe(event: BabyEvent): { label: string; detail?: string } {
       return { label: "Woke up" };
     case "weight":
       return { label: "Weight", detail: formatWeightGrams(event.weight_grams) };
+    case "book_read":
+      return {
+        label: "Book read",
+        detail: event.author ? `${event.title} — ${event.author}` : event.title,
+      };
+    case "food_tried": {
+      const reaction =
+        event.reaction === "loved"
+          ? " · loved it"
+          : event.reaction === "liked"
+            ? " · liked it"
+            : event.reaction === "disliked"
+              ? " · disliked"
+              : "";
+      const firstTry = event.first_try ? " · first try" : "";
+      return {
+        label: "Food tried",
+        detail: `${event.food_name}${reaction}${firstTry}`,
+      };
+    }
   }
 }
 

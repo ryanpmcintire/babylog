@@ -127,10 +127,8 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
 
 const NIGHT_START_HOUR = 20;
 const NIGHT_END_HOUR = 6;
-const DAY_CENTER_HOUR = (NIGHT_END_HOUR + NIGHT_START_HOUR) / 2; // 13 — noon-ish
 
-function DayNightBackdrop({ rowHeight }: { rowHeight: number }) {
-  const iconSize = Math.max(10, Math.min(rowHeight - 8, 22));
+function DayNightBackdrop({ withIcons = false }: { withIcons?: boolean }) {
   return (
     <>
       <span
@@ -141,17 +139,7 @@ function DayNightBackdrop({ rowHeight }: { rowHeight: number }) {
           background: "rgba(29, 25, 48, 0.08)",
         }}
       >
-        <MoonGlyph size={iconSize} />
-      </span>
-      <span
-        className="absolute top-0 bottom-0 pointer-events-none flex items-center justify-center"
-        style={{
-          left: `${(DAY_CENTER_HOUR / 24) * 100}%`,
-          width: iconSize + 6,
-          marginLeft: -(iconSize + 6) / 2,
-        }}
-      >
-        <SunGlyph size={iconSize} />
+        {withIcons && <MoonGlyph size={14} />}
       </span>
       <span
         className="absolute top-0 bottom-0 pointer-events-none flex items-center justify-center"
@@ -161,38 +149,9 @@ function DayNightBackdrop({ rowHeight }: { rowHeight: number }) {
           background: "rgba(29, 25, 48, 0.08)",
         }}
       >
-        <MoonGlyph size={iconSize} />
+        {withIcons && <MoonGlyph size={14} />}
       </span>
     </>
-  );
-}
-
-function SunGlyph({ size }: { size: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-      style={{ opacity: 0.32, color: "var(--foreground)" }}
-    >
-      <circle cx="12" cy="12" r="4" fill="currentColor" />
-      <g
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        fill="none"
-      >
-        <line x1="12" y1="2.5" x2="12" y2="5" />
-        <line x1="12" y1="19" x2="12" y2="21.5" />
-        <line x1="2.5" y1="12" x2="5" y2="12" />
-        <line x1="19" y1="12" x2="21.5" y2="12" />
-        <line x1="5.3" y1="5.3" x2="7" y2="7" />
-        <line x1="17" y1="17" x2="18.7" y2="18.7" />
-        <line x1="18.7" y1="5.3" x2="17" y2="7" />
-        <line x1="7" y1="17" x2="5.3" y2="18.7" />
-      </g>
-    </svg>
   );
 }
 
@@ -203,7 +162,7 @@ function MoonGlyph({ size }: { size: number }) {
       height={size}
       viewBox="0 0 24 24"
       aria-hidden="true"
-      style={{ opacity: 0.35, color: "var(--foreground)" }}
+      style={{ opacity: 0.45, color: "var(--muted)" }}
     >
       <path
         d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
@@ -225,42 +184,17 @@ function Legend() {
     <div className="flex gap-3 flex-wrap text-[10px] text-muted items-center">
       <span className="flex items-center gap-1">
         <span
-          className="inline-block w-4 h-3 rounded-full"
+          className="inline-block w-4 h-2 rounded-full"
           style={{
             background: MARKER_COLORS.sleep,
             opacity: 0.7,
-            border: "2px solid var(--marker-halo)",
-            boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
           }}
         />
         sleep
       </span>
       <LegendDot color={MARKER_COLORS.feed} label="feed" />
-      <span className="flex items-center gap-1">
-        <span
-          className="inline-block w-3 h-3"
-          style={{
-            background: MARKER_COLORS.diaper,
-            borderRadius: "2px",
-            border: "2px solid var(--marker-halo)",
-            boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
-          }}
-        />
-        diaper
-      </span>
-      <span className="flex items-center gap-1">
-        <span
-          className="inline-block w-3 h-3"
-          style={{
-            background: MARKER_COLORS.pump,
-            borderRadius: "1px",
-            transform: "rotate(45deg)",
-            border: "2px solid var(--marker-halo)",
-            boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
-          }}
-        />
-        pump
-      </span>
+      <LegendDot color={MARKER_COLORS.diaper} label="diaper" />
+      <LegendDot color={MARKER_COLORS.pump} label="pump" />
     </div>
   );
 }
@@ -269,12 +203,8 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   return (
     <span className="flex items-center gap-1">
       <span
-        className="inline-block w-3 h-3 rounded-full"
-        style={{
-          background: color,
-          border: "2px solid var(--marker-halo)",
-          boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
-        }}
+        className="inline-block w-2 h-2 rounded-full"
+        style={{ background: color }}
       />
       {label}
     </span>
@@ -283,7 +213,8 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 
 function AxisRow() {
   return (
-    <div className="relative h-5 ml-10 border-b border-accent-soft/60">
+    <div className="relative h-5 ml-10 border-b border-accent-soft/60 overflow-hidden">
+      <DayNightBackdrop withIcons />
       {AXIS_TICKS.map((h) => (
         <span
           key={h}
@@ -337,15 +268,6 @@ function DayRow({
           className="absolute inset-0"
           style={{ overflow: "hidden" }}
         >
-        <DayNightBackdrop rowHeight={rowHeight} />
-        {AXIS_TICKS.slice(1, -1).map((h) => (
-          <span
-            key={h}
-            className="absolute top-0 bottom-0 w-px bg-accent-soft/40"
-            style={{ left: `${(h / 24) * 100}%` }}
-          />
-        ))}
-
         {sortedByStart.map((s, i) => {
           const conn = connections.get(s) ?? { left: false, right: false };
           return (
@@ -401,8 +323,6 @@ function DayRow({
 
 function MarkerDot({ marker, days }: { marker: Marker; days: number }) {
   const isPump = marker.kind === "pump";
-  const isDiaper =
-    marker.kind === "diaper_wet" || marker.kind === "diaper_dirty";
   const isFeed = marker.kind === "breast" || marker.kind === "bottle";
 
   const color = isFeed
@@ -411,34 +331,21 @@ function MarkerDot({ marker, days }: { marker: Marker; days: number }) {
       ? MARKER_COLORS.pump
       : MARKER_COLORS.diaper;
 
-  const baseSize = isFeed ? 12 : 11;
-  const size = days <= 7 ? baseSize : days <= 14 ? baseSize - 2 : baseSize - 3;
+  const size = days <= 7 ? 8 : days <= 14 ? 7 : 6;
 
-  // Three vertical tiers so different event types never land on top of each
-  // other. Feeds highest, diapers middle, pumps lowest.
-  const topPercent = isFeed ? 28 : isPump ? 76 : 52;
-
-  // Three shapes: circle (feed), rounded square (diaper), diamond (pump).
-  const shapeStyle: React.CSSProperties = isFeed
-    ? { borderRadius: "50%" }
-    : isDiaper
-      ? { borderRadius: "2px" }
-      : { borderRadius: "1px" };
+  // Three tiers — feeds top, diapers middle, pumps bottom.
+  const topPercent = isFeed ? 25 : isPump ? 75 : 50;
 
   return (
     <span
-      className="absolute shadow-sm"
+      className="absolute rounded-full"
       style={{
         left: `${(marker.atMin / 1440) * 100}%`,
         top: `${topPercent}%`,
         width: size,
         height: size,
-        transform: isPump
-          ? "translate(-50%, -50%) rotate(45deg)"
-          : "translate(-50%, -50%)",
+        transform: "translate(-50%, -50%)",
         background: color,
-        border: "2px solid var(--marker-halo)",
-        ...shapeStyle,
       }}
       title={`${marker.kind} at ${minutesToLabel(marker.atMin)}`}
     />

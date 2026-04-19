@@ -5,10 +5,14 @@ import { useState } from "react";
 import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
 import { ALLOWED_EMAILS } from "@/lib/allowlist";
 import { writeEvent } from "@/lib/useEvents";
+import { useBoolPref } from "@/lib/prefs";
 import { useAuth } from "../providers";
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
+  const [showGrowthCurves, setShowGrowthCurves] = useBoolPref(
+    "showGrowthCurves",
+  );
   const [weightGrams, setWeightGrams] = useState("");
   const [weightLb, setWeightLb] = useState("");
   const [weightOz, setWeightOz] = useState("");
@@ -180,6 +184,27 @@ export default function SettingsPage() {
               </li>
             ))}
           </ul>
+        </Section>
+
+        <Section title="Charts">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showGrowthCurves}
+              onChange={(e) => setShowGrowthCurves(e.target.checked)}
+              className="w-4 h-4 mt-0.5 shrink-0"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm font-semibold text-foreground">
+                Show growth reference curves
+              </span>
+              <span className="text-xs text-muted leading-snug">
+                Adds WHO p3 / p50 / p97 weight-for-age curves behind the weight
+                chart. Off by default — newborn weight dips are normal and the
+                curves can read as alarming.
+              </span>
+            </span>
+          </label>
         </Section>
 
         <Section title="App">

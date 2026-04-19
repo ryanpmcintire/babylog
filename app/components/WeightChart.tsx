@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { formatWeightGrams } from "@/lib/events";
 import { LILY_BIRTHDATE } from "@/lib/age";
+import { weightPercentileGrams } from "@/lib/norms";
+import { useBoolPref } from "@/lib/prefs";
 
 const DAYS_PROJECTION = 14;
 const REGRESSION_MIN_DAY = 7;
@@ -26,6 +28,7 @@ function shortWeight(g: number): string {
 
 export function WeightChart({ events }: { events: BabyEvent[] }) {
   const [hovered, setHovered] = useState<WeightPoint | null>(null);
+  const [showCurves] = useBoolPref("showGrowthCurves");
 
   const points = useMemo<WeightPoint[]>(() => {
     const weights: WeightPoint[] = [];
@@ -39,27 +42,14 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
     return weights.sort((a, b) => a.dayOfLife - b.dayOfLife);
   }, [events]);
 
-  if (points.length === 0) {
-    return (
-      <div className="w-full rounded-3xl border border-accent-soft bg-surface p-5 shadow-sm flex flex-col gap-2">
-        <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
-          Weight
-        </h2>
-        <p className="text-sm text-muted">
-          No weights logged yet. Add one from Settings.
-        </p>
-      </div>
-    );
-  }
-
-  const latest = points[points.length - 1]!;
+  const latest = points.length > 0 ? points[points.length - 1]! : null;
 
   const regressionPoints = points.filter(
     (p) => p.dayOfLife >= REGRESSION_MIN_DAY,
   );
   const projection: { dayOfLife: number; grams: number; date: Date }[] = [];
   let gPerDay: number | null = null;
-  if (regressionPoints.length >= 2) {
+  if (latest && regressionPoints.length >= 2) {
     const n = regressionPoints.length;
     const sumX = regressionPoints.reduce((a, p) => a + p.dayOfLife, 0);
     const sumY = regressionPoints.reduce((a, p) => a + p.grams, 0);
@@ -87,16 +77,48 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
   }
 
   const domainEndDayOfLife = Math.max(
-    latest.dayOfLife + (projection.length ? DAYS_PROJECTION : 0),
+    (latest?.dayOfLife ?? 0) + (projection.length ? DAYS_PROJECTION : 0),
     7,
   );
+
+  const percentileSamples = useMemo(() => {
+    if (!showCurves) return [];
+    const out: { dayOfLife: number; p3: number; p50: number; p97: number }[] =
+      [];
+    const step = Math.max(1, domainEndDayOfLife / 60);
+    for (let d = 0; d <= domainEndDayOfLife; d += step) {
+      out.push({
+        dayOfLife: d,
+        p3: weightPercentileGrams(d, 3),
+        p50: weightPercentileGrams(d, 50),
+        p97: weightPercentileGrams(d, 97),
+      });
+    }
+    return out;
+  }, [domainEndDayOfLife, showCurves]);
+
+  if (!latest) {
+    return (
+      <div className="w-full rounded-3xl border border-accent-soft bg-surface p-5 shadow-sm flex flex-col gap-2">
+        <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
+          Weight
+        </h2>
+        <p className="text-sm text-muted">
+          No weights logged yet. Add one from Settings.
+        </p>
+      </div>
+    );
+  }
+
   const allGrams = [
     ...points.map((p) => p.grams),
     ...projection.map((p) => p.grams),
+    ...percentileSamples.map((p) => p.p3),
+    ...percentileSamples.map((p) => p.p97),
   ];
   const minG = Math.min(...allGrams);
   const maxG = Math.max(...allGrams);
-  const yPad = Math.max(200, (maxG - minG) * 0.15);
+  const yPad = Math.max(200, (maxG - minG) * 0.1);
   const yMin = Math.max(0, minG - yPad);
   const yMax = maxG + yPad;
 
@@ -126,6 +148,14 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
         )
         .join(" ")
     : "";
+
+  const percentilePath = (key: "p3" | "p50" | "p97") =>
+    percentileSamples
+      .map(
+        (p, i) =>
+          `${i === 0 ? "M" : "L"}${xFor(p.dayOfLife).toFixed(1)} ${yFor(p[key]).toFixed(1)}`,
+      )
+      .join(" ");
 
   return (
     <div className="w-full rounded-3xl border border-accent-soft bg-surface p-5 shadow-sm flex flex-col gap-3">
@@ -198,6 +228,37 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
             strokeDasharray="2 3"
             opacity="0.4"
           />
+
+          {showCurves && (
+            <>
+              <path
+                d={percentilePath("p3")}
+                fill="none"
+                stroke="var(--muted)"
+                strokeWidth="0.75"
+                strokeDasharray="2 3"
+                opacity="0.5"
+                vectorEffect="non-scaling-stroke"
+              />
+              <path
+                d={percentilePath("p50")}
+                fill="none"
+                stroke="var(--muted)"
+                strokeWidth="0.75"
+                opacity="0.55"
+                vectorEffect="non-scaling-stroke"
+              />
+              <path
+                d={percentilePath("p97")}
+                fill="none"
+                stroke="var(--muted)"
+                strokeWidth="0.75"
+                strokeDasharray="2 3"
+                opacity="0.5"
+                vectorEffect="non-scaling-stroke"
+              />
+            </>
+          )}
 
           {projectionPath && (
             <path
