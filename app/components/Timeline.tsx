@@ -9,6 +9,7 @@ import {
   type Marker,
   type SleepSegment,
 } from "@/lib/aggregates";
+import { EditEventSheet } from "./EditEventSheet";
 
 const AXIS_TICKS = [0, 6, 12, 18, 24];
 const TIMELINE_RANGES = [3, 7, 14, 30];
@@ -37,6 +38,10 @@ function shortDayLabel(d: Date, today: Date): string {
 export function Timeline({ events }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
   const [tick, setTick] = useState(() => Date.now());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editingEvent = editingId
+    ? events.find((e) => e.id === editingId) ?? null
+    : null;
   useEffect(() => {
     const id = setInterval(() => setTick(Date.now()), 60 * 1000);
     return () => clearInterval(id);
@@ -118,9 +123,17 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
             nowMin={
               idx === 0 ? now.getHours() * 60 + now.getMinutes() : null
             }
+            onMarkerClick={setEditingId}
           />
         ))}
       </div>
+
+      {editingEvent && (
+        <EditEventSheet
+          event={editingEvent}
+          onClose={() => setEditingId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -235,6 +248,7 @@ function DayRow({
   days,
   isToday,
   nowMin,
+  onMarkerClick,
 }: {
   label: string;
   sleeps: SleepSegment[];
@@ -242,6 +256,7 @@ function DayRow({
   days: number;
   isToday?: boolean;
   nowMin?: number | null;
+  onMarkerClick: (eventId: string) => void;
 }) {
   const { rowHeight, padY } = rowMetrics(days);
 
@@ -295,7 +310,12 @@ function DayRow({
         })}
 
         {markers.map((m, i) => (
-          <MarkerDot key={`m${i}`} marker={m} days={days} />
+          <MarkerDot
+            key={`m${i}`}
+            marker={m}
+            days={days}
+            onClick={() => onMarkerClick(m.eventId)}
+          />
         ))}
         </div>
 
@@ -321,7 +341,15 @@ function DayRow({
   );
 }
 
-function MarkerDot({ marker, days }: { marker: Marker; days: number }) {
+function MarkerDot({
+  marker,
+  days,
+  onClick,
+}: {
+  marker: Marker;
+  days: number;
+  onClick: () => void;
+}) {
   const isPump = marker.kind === "pump";
   const isFeed = marker.kind === "breast" || marker.kind === "bottle";
 
@@ -332,23 +360,36 @@ function MarkerDot({ marker, days }: { marker: Marker; days: number }) {
       : MARKER_COLORS.diaper;
 
   const size = days <= 7 ? 8 : days <= 14 ? 7 : 6;
+  const hit = Math.max(size + 12, 22);
 
   // Three tiers — feeds top, diapers middle, pumps bottom.
   const topPercent = isFeed ? 25 : isPump ? 75 : 50;
 
   return (
-    <span
-      className="absolute rounded-full"
+    <button
+      type="button"
+      onClick={onClick}
+      className="absolute flex items-center justify-center"
       style={{
         left: `${(marker.atMin / 1440) * 100}%`,
         top: `${topPercent}%`,
-        width: size,
-        height: size,
+        width: hit,
+        height: hit,
         transform: "translate(-50%, -50%)",
-        background: color,
+        background: "transparent",
+        border: "none",
+        padding: 0,
+        cursor: "pointer",
+        WebkitTapHighlightColor: "transparent",
       }}
+      aria-label={`${marker.kind} at ${minutesToLabel(marker.atMin)}`}
       title={`${marker.kind} at ${minutesToLabel(marker.atMin)}`}
-    />
+    >
+      <span
+        className="rounded-full pointer-events-none"
+        style={{ width: size, height: size, background: color }}
+      />
+    </button>
   );
 }
 

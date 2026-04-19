@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
 import { ALLOWED_EMAILS } from "@/lib/allowlist";
-import { writeEvent } from "@/lib/useEvents";
+import { fetchAllEvents, writeEvent } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
 import { useAuth } from "../providers";
+import type { BabyEvent } from "@/lib/events";
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
@@ -23,6 +24,34 @@ export default function SettingsPage() {
   });
   const [weightFlash, setWeightFlash] = useState<string | null>(null);
   const [weightBusy, setWeightBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function exportCsv() {
+    if (exportBusy) return;
+    setExportBusy(true);
+    setExportError(null);
+    try {
+      const events = await fetchAllEvents();
+      const csv = eventsToCsv(events);
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const date = new Date().toISOString().slice(0, 10);
+      a.download = `babylog-${date}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(
+        err instanceof Error ? err.message : "Export failed",
+      );
+    } finally {
+      setExportBusy(false);
+    }
+  }
 
   async function submitWeight() {
     if (weightBusy) return;
@@ -207,6 +236,24 @@ export default function SettingsPage() {
           </label>
         </Section>
 
+        <Section title="Export">
+          <p className="text-xs text-muted">
+            Download every logged event as a CSV file — handy for pediatrician
+            visits or backups.
+          </p>
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={exportBusy}
+            className="self-start rounded-xl border border-accent-soft bg-surface px-4 py-2 text-sm font-semibold text-foreground hover:border-accent/60 disabled:opacity-60"
+          >
+            {exportBusy ? "Preparing…" : "Download CSV"}
+          </button>
+          {exportError && (
+            <p className="text-xs text-rose-600">{exportError}</p>
+          )}
+        </Section>
+
         <Section title="App">
           <Row label="Version" value="v1 · phase 5" />
           <p className="text-xs text-muted leading-relaxed">
@@ -243,4 +290,54 @@ function Row({ label, value }: { label: string; value: string }) {
       </span>
     </div>
   );
+}
+
+function csvEscape(v: unknown): string {
+  if (v === undefined || v === null) return "";
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function eventsToCsv(events: BabyEvent[]): string {
+  const header = [
+    "id",
+    "occurred_at",
+    "type",
+    "created_by_email",
+    "created_at",
+    "details",
+  ];
+  const rows = events.map((e) => {
+    const { id, occurred_at, type, created_by_email, created_at, ...rest } =
+      e as unknown as Record<string, unknown>;
+    const occurredIso =
+      occurred_at && typeof occurred_at === "object" && "toDate" in (occurred_at as object)
+        ? (occurred_at as { toDate: () => Date }).toDate().toISOString()
+        : "";
+    const createdIso =
+      created_at && typeof created_at === "object" && "toDate" in (created_at as object)
+        ? (created_at as { toDate: () => Date }).toDate().toISOString()
+        : "";
+    // Strip base fields already in columns, plus deleted/updated_at.
+    const details: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rest)) {
+      if (
+        k === "deleted" ||
+        k === "updated_at" ||
+        k === "created_by"
+      )
+        continue;
+      details[k] = v;
+    }
+    return [
+      csvEscape(id),
+      csvEscape(occurredIso),
+      csvEscape(type),
+      csvEscape(created_by_email ?? ""),
+      csvEscape(createdIso),
+      csvEscape(details),
+    ].join(",");
+  });
+  return [header.join(","), ...rows].join("\r\n");
 }

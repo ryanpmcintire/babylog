@@ -35,6 +35,7 @@ export type Marker = {
   dayKey: string;
   atMin: number;
   kind: "breast" | "bottle" | "pump" | "diaper_wet" | "diaper_dirty";
+  eventId: string;
 };
 
 function startOfDay(d: Date): Date {
@@ -424,19 +425,29 @@ export function buildMarkers(events: BabyEvent[]): Marker[] {
     const atMin = at.getHours() * 60 + at.getMinutes();
     switch (e.type) {
       case "breast_feed":
-        markers.push({ dayKey: key, atMin, kind: "breast" });
+        markers.push({ dayKey: key, atMin, kind: "breast", eventId: e.id });
         break;
       case "bottle_feed":
-        markers.push({ dayKey: key, atMin, kind: "bottle" });
+        markers.push({ dayKey: key, atMin, kind: "bottle", eventId: e.id });
         break;
       case "pump":
-        markers.push({ dayKey: key, atMin, kind: "pump" });
+        markers.push({ dayKey: key, atMin, kind: "pump", eventId: e.id });
         break;
       case "diaper_wet":
-        markers.push({ dayKey: key, atMin, kind: "diaper_wet" });
+        markers.push({
+          dayKey: key,
+          atMin,
+          kind: "diaper_wet",
+          eventId: e.id,
+        });
         break;
       case "diaper_dirty":
-        markers.push({ dayKey: key, atMin, kind: "diaper_dirty" });
+        markers.push({
+          dayKey: key,
+          atMin,
+          kind: "diaper_dirty",
+          eventId: e.id,
+        });
         break;
     }
   }

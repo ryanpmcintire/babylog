@@ -5,6 +5,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -124,4 +125,33 @@ export async function softDeleteEvent(id: string): Promise<void> {
     deleted: true,
     updated_at: Timestamp.now(),
   });
+}
+
+export async function fetchAllEvents(): Promise<BabyEvent[]> {
+  const db = getDb();
+  const q = query(
+    collection(db, "events"),
+    orderBy("occurred_at", "desc"),
+  );
+  const snap = await getDocs(q);
+  const list: BabyEvent[] = [];
+  snap.forEach((d) => {
+    const data = d.data() as Omit<BabyEvent, "id">;
+    if (!data.deleted) list.push({ ...(data as BabyEvent), id: d.id });
+  });
+  return list;
+}
+
+export async function updateEvent(
+  id: string,
+  patch: Partial<NewEventPayload> & { occurred_at?: Date },
+): Promise<void> {
+  const db = getDb();
+  const { occurred_at, ...rest } = patch;
+  const update: Record<string, unknown> = {
+    ...rest,
+    updated_at: Timestamp.now(),
+  };
+  if (occurred_at) update.occurred_at = Timestamp.fromDate(occurred_at);
+  await updateDoc(doc(db, "events", id), update);
 }

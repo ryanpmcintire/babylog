@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { formatWeightGrams, sideLabel } from "@/lib/events";
 import { formatLiveElapsed, formatVolume } from "@/lib/format";
 import { softDeleteEvent } from "@/lib/useEvents";
 import { useAuth } from "../providers";
 import { SwipeableRow } from "./SwipeableRow";
+import { EditEventSheet } from "./EditEventSheet";
 
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -121,8 +122,22 @@ function timeLabel(d: Date): string {
   });
 }
 
+function breaksSleepChain(e: BabyEvent): boolean {
+  // Any logged event that implies the baby was awake — if it falls between a
+  // sleep_start and sleep_end, the original start is considered orphaned.
+  return (
+    e.type === "breast_feed" ||
+    e.type === "bottle_feed" ||
+    e.type === "pump" ||
+    e.type === "diaper_wet" ||
+    e.type === "diaper_dirty" ||
+    e.type === "sleep_end"
+  );
+}
+
 function buildRows(events: BabyEvent[]): HistoryRow[] {
-  // events ordered newest-first. Pair sleep_end with its prior sleep_start.
+  // events ordered newest-first. Pair sleep_end with its prior sleep_start,
+  // but only if no awake-indicating event happened between them.
   const rows: HistoryRow[] = [];
   const consumedStartIds = new Set<string>();
 
@@ -130,24 +145,32 @@ function buildRows(events: BabyEvent[]): HistoryRow[] {
     const e = events[i]!;
 
     if (e.type === "sleep_end") {
-      // Find nearest earlier sleep_start without a matching end.
-      const startIdx = events.findIndex(
-        (s, j) => j > i && s.type === "sleep_start" && !consumedStartIds.has(s.id),
-      );
-      if (startIdx !== -1) {
-        const start = events[startIdx]!;
-        consumedStartIds.add(start.id);
-        rows.push({
-          kind: "sleep",
-          at: e.occurred_at.toDate(),
-          startedAt: start.occurred_at.toDate(),
-          endedAt: e.occurred_at.toDate(),
-          actor: firstName(e.created_by_email),
-          startId: start.id,
-          endId: e.id,
-        });
-        continue;
+      let paired = false;
+      for (let j = i + 1; j < events.length; j++) {
+        const candidate = events[j]!;
+        if (
+          candidate.type === "sleep_start" &&
+          !consumedStartIds.has(candidate.id)
+        ) {
+          consumedStartIds.add(candidate.id);
+          rows.push({
+            kind: "sleep",
+            at: e.occurred_at.toDate(),
+            startedAt: candidate.occurred_at.toDate(),
+            endedAt: e.occurred_at.toDate(),
+            actor: firstName(e.created_by_email),
+            startId: candidate.id,
+            endId: e.id,
+          });
+          paired = true;
+          break;
+        }
+        if (breaksSleepChain(candidate)) break;
       }
+      if (!paired) {
+        rows.push({ kind: "event", at: e.occurred_at.toDate(), event: e });
+      }
+      continue;
     }
 
     if (e.type === "sleep_start" && consumedStartIds.has(e.id)) continue;
@@ -160,6 +183,7 @@ function buildRows(events: BabyEvent[]): HistoryRow[] {
 
 export function History({ events }: { events: BabyEvent[] }) {
   const { user } = useAuth();
+  const [editing, setEditing] = useState<BabyEvent | null>(null);
   const groups = useMemo(() => {
     const rows = buildRows(events);
     const byDay = new Map<string, { label: string; rows: HistoryRow[] }>();
@@ -188,13 +212,29 @@ export function History({ events }: { events: BabyEvent[] }) {
       <h2 className="text-xs uppercase tracking-[0.2em] text-muted text-center">
         History
       </h2>
+      {editing && (
+        <EditEventSheet
+          event={editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
       {groups.map((g) => (
         <section key={g.label} className="w-full flex flex-col gap-2">
           <p className="text-xs font-semibold text-muted px-1">{g.label}</p>
           <div className="overflow-hidden rounded-2xl border border-accent-soft bg-surface divide-y divide-accent-soft">
             {g.rows.map((row, idx) => {
               const canDelete = canUserDelete(row, user?.uid);
-              const item = <HistoryItem row={row} />;
+              const canEdit = canDelete && row.kind === "event";
+              const item = (
+                <HistoryItem
+                  row={row}
+                  onEdit={
+                    canEdit && row.kind === "event"
+                      ? () => setEditing(row.event)
+                      : undefined
+                  }
+                />
+              );
               if (canDelete) {
                 return (
                   <SwipeableRow
@@ -240,9 +280,20 @@ async function deleteRow(row: HistoryRow): Promise<void> {
   if (row.endId) await softDeleteEvent(row.endId);
 }
 
-function HistoryItem({ row }: { row: HistoryRow }) {
+function HistoryItem({
+  row,
+  onEdit,
+}: {
+  row: HistoryRow;
+  onEdit?: () => void;
+}) {
   if (row.kind === "sleep") {
-    const durationMs = (row.endedAt ?? new Date()).getTime() - row.startedAt.getTime();
+    const end = row.endedAt ?? new Date();
+    const durationMs = end.getTime() - row.startedAt.getTime();
+    const sameDay = dayKey(row.startedAt) === dayKey(end);
+    const startDisplay = sameDay
+      ? timeLabel(row.startedAt)
+      : `${dayLabel(row.startedAt)} ${timeLabel(row.startedAt)}`;
     return (
       <div className="flex items-baseline gap-3 px-4 py-3">
         <span className="w-14 shrink-0 text-sm tabular-nums text-muted">
@@ -253,7 +304,7 @@ function HistoryItem({ row }: { row: HistoryRow }) {
             Slept {formatLiveElapsed(durationMs)}
           </p>
           <p className="text-xs text-muted truncate">
-            {timeLabel(row.startedAt)} → {row.endedAt ? timeLabel(row.endedAt) : "ongoing"}
+            {startDisplay} → {row.endedAt ? timeLabel(row.endedAt) : "ongoing"}
           </p>
         </div>
         <span className="text-xs text-muted shrink-0">{row.actor}</span>
@@ -264,8 +315,8 @@ function HistoryItem({ row }: { row: HistoryRow }) {
   const e = row.event;
   const info = describe(e);
   const actor = firstName(e.created_by_email);
-  return (
-    <div className="flex items-baseline gap-3 px-4 py-3">
+  const inner = (
+    <>
       <span className="w-14 shrink-0 text-sm tabular-nums text-muted">
         {timeLabel(row.at)}
       </span>
@@ -276,6 +327,23 @@ function HistoryItem({ row }: { row: HistoryRow }) {
         )}
       </div>
       <span className="text-xs text-muted shrink-0">{actor}</span>
-    </div>
+    </>
+  );
+
+  if (onEdit) {
+    return (
+      <button
+        type="button"
+        onClick={onEdit}
+        className="w-full flex items-baseline gap-3 px-4 py-3 text-left hover:bg-background/50 active:bg-background transition-colors"
+        style={{ WebkitTapHighlightColor: "transparent" }}
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-baseline gap-3 px-4 py-3">{inner}</div>
   );
 }

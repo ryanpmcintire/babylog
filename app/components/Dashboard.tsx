@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
 import { formatElapsed, formatLiveElapsed, formatVolume } from "@/lib/format";
 import type { BabyEvent } from "@/lib/events";
-import { currentSleepState, estimateNextEvent } from "@/lib/aggregates";
+import {
+  buildDailyBuckets,
+  currentSleepState,
+  estimateNextEvent,
+} from "@/lib/aggregates";
 import { maxFeedIntervalHours } from "@/lib/norms";
 import { FunAge } from "./FunAge";
 
@@ -163,6 +167,17 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
 
   const age = formatBabyAge(LILY_BIRTHDATE, new Date(now));
 
+  const todayBucket = buildDailyBuckets(events, 1, new Date(now), {
+    inferBufferMin: 10,
+  })[0];
+  const sleepHours = todayBucket ? todayBucket.sleepMinutes / 60 : 0;
+  const sleepHrsWhole = Math.floor(sleepHours);
+  const sleepMinsRem = Math.round((sleepHours - sleepHrsWhole) * 60);
+  const sleepText =
+    sleepHrsWhole > 0
+      ? `${sleepHrsWhole}h ${sleepMinsRem}m`
+      : `${sleepMinsRem}m`;
+
   function formatETA(target: Date): { text: string; overdue: boolean } {
     const diffMs = target.getTime() - now;
     if (diffMs < 0) {
@@ -185,6 +200,26 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
         </p>
         <FunAge />
       </div>
+
+      {todayBucket && (todayBucket.feeds > 0 || todayBucket.diapers > 0 || todayBucket.sleepMinutes > 0) && (
+        <div className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-2 flex items-baseline justify-center gap-3 text-xs text-foreground tabular-nums flex-wrap">
+          <span className="text-[10px] uppercase tracking-wider text-muted">Today</span>
+          <span>
+            <span className="font-bold">{todayBucket.feeds}</span>
+            <span className="text-muted"> feeds</span>
+          </span>
+          <span className="text-muted">·</span>
+          <span>
+            <span className="font-bold">{todayBucket.diapers}</span>
+            <span className="text-muted"> diapers</span>
+          </span>
+          <span className="text-muted">·</span>
+          <span>
+            <span className="font-bold">{sleepText}</span>
+            <span className="text-muted"> sleep</span>
+          </span>
+        </div>
+      )}
 
       <div className="w-full grid grid-cols-1 gap-2 rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
         <Row

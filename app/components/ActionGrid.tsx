@@ -6,6 +6,7 @@ import {
   MILK_TYPES,
   SIDES,
   VOLUME_PRESETS_ML,
+  type BabyEvent,
   type BreastFeedOutcome,
   type MilkType,
   type Side,
@@ -15,16 +16,74 @@ import { softDeleteEvent, writeEvent, type NewEventPayload } from "@/lib/useEven
 
 type PanelKind = "breast" | "bottle" | "pump" | null;
 
+const SESSION_GAP_MS = 5000;
+
+function lastSessionPayloads(
+  events: BabyEvent[] | undefined,
+  types: BabyEvent["type"][],
+): NewEventPayload[] {
+  if (!events || events.length === 0) return [];
+  const session: BabyEvent[] = [];
+  let anchorMs: number | null = null;
+  for (const e of events) {
+    if (!types.includes(e.type)) continue;
+    const ms = e.occurred_at.toMillis();
+    if (anchorMs === null) {
+      anchorMs = ms;
+      session.push(e);
+    } else if (Math.abs(ms - anchorMs) <= SESSION_GAP_MS) {
+      session.push(e);
+    } else {
+      break;
+    }
+  }
+  const payloads: NewEventPayload[] = [];
+  for (const e of session) {
+    if (e.type === "breast_feed") {
+      payloads.push({
+        type: "breast_feed",
+        outcome: e.outcome,
+        side: (e.side ?? "left") as Side,
+      });
+    } else if (e.type === "bottle_feed") {
+      payloads.push({
+        type: "bottle_feed",
+        volume_ml: e.volume_ml,
+        milk_types: e.milk_types,
+      });
+    } else if (e.type === "pump") {
+      payloads.push({
+        type: "pump",
+        volume_ml: e.volume_ml,
+        side: (e.side ?? "left") as Side,
+      });
+    }
+  }
+  return payloads;
+}
+
+const TIMER_STORAGE_KEY = "babylog.feedTimerStart";
+
+function formatElapsedClock(totalSec: number): string {
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 export function ActionGrid({
   sleeping,
   occurredAt,
   backdate,
   suggestedBreastSide,
+  events,
 }: {
   sleeping: boolean;
   occurredAt?: Date;
   backdate?: boolean;
   suggestedBreastSide?: Side;
+  events?: BabyEvent[];
 }) {
   const [panel, setPanel] = useState<PanelKind>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -33,6 +92,49 @@ export function ActionGrid({
     null,
   );
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [timerStart, setTimerStart] = useState<number | null>(null);
+  const [timerTick, setTimerTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (backdate) return;
+    try {
+      const raw = localStorage.getItem(TIMER_STORAGE_KEY);
+      if (raw) {
+        const ms = Number(raw);
+        if (Number.isFinite(ms) && ms > 0) setTimerStart(ms);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [backdate]);
+
+  useEffect(() => {
+    if (timerStart === null) return;
+    const id = setInterval(() => setTimerTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [timerStart]);
+
+  function startTimer() {
+    const ms = Date.now();
+    setTimerStart(ms);
+    try {
+      localStorage.setItem(TIMER_STORAGE_KEY, String(ms));
+    } catch {
+      /* ignore */
+    }
+  }
+  function clearTimer() {
+    setTimerStart(null);
+    try {
+      localStorage.removeItem(TIMER_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const timerOccurredAt =
+    timerStart !== null ? new Date(timerStart) : undefined;
+  const effectiveOccurredAt = occurredAt ?? timerOccurredAt;
 
   function clearUndoTimer() {
     if (undoTimerRef.current) {
@@ -53,17 +155,18 @@ export function ActionGrid({
       return;
     }
     try {
-      const when = occurredAt ?? new Date();
+      const when = effectiveOccurredAt ?? new Date();
       for (const p of payloads) {
         await writeEvent(p, when);
       }
-      setFlash(
-        backdate
-          ? `${confirmation} (at ${when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })})`
-          : confirmation,
-      );
+      const timeNote =
+        backdate || timerStart !== null
+          ? ` (at ${when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })})`
+          : "";
+      setFlash(confirmation + timeNote);
       setTimeout(() => setFlash(null), 2000);
       setPanel(null);
+      if (timerStart !== null) clearTimer();
     } catch (err) {
       setFlash(
         err instanceof Error ? `Couldn't save: ${err.message}` : "Couldn't save",
@@ -84,7 +187,7 @@ export function ActionGrid({
     setUndoInfo(null);
     setFlash(null);
     try {
-      const when = occurredAt ?? new Date();
+      const when = effectiveOccurredAt ?? new Date();
       const id = await writeEvent(payload, when);
       setUndoInfo({ id, label });
       undoTimerRef.current = setTimeout(() => {
@@ -122,18 +225,71 @@ export function ActionGrid({
     return () => clearUndoTimer();
   }, []);
 
+  async function repeatLast(
+    types: BabyEvent["type"][],
+    label: string,
+  ) {
+    const payloads = lastSessionPayloads(events, types);
+    if (payloads.length === 0) {
+      setFlash("Nothing recent to repeat");
+      setTimeout(() => setFlash(null), 2000);
+      return;
+    }
+    await log(payloads, `${label} (repeated)`);
+  }
+
+  const elapsedSec =
+    timerStart !== null ? Math.max(0, Math.floor((timerTick - timerStart) / 1000)) : 0;
+
   return (
     <div className="w-full flex flex-col gap-3">
+      {!backdate && timerStart === null && (
+        <button
+          type="button"
+          onClick={startTimer}
+          className="self-center text-xs text-muted underline decoration-dotted underline-offset-4 hover:text-foreground"
+        >
+          Start feed timer
+        </button>
+      )}
+      {timerStart !== null && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-accent bg-accent/10 px-4 py-2">
+          <span className="text-xs text-muted">
+            Feeding since{" "}
+            <span className="text-foreground font-semibold tabular-nums">
+              {new Date(timerStart).toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </span>
+            {" · "}
+            <span className="text-accent font-bold tabular-nums">
+              {formatElapsedClock(elapsedSec)}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={clearTimer}
+            className="text-xs text-muted underline decoration-dotted underline-offset-4 hover:text-foreground"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <ActionButton
           onClick={() => setPanel("breast")}
+          onLongPress={() => repeatLast(["breast_feed"], "Breast")}
           icon={<HeartIcon />}
+          hint="hold to repeat"
         >
           Breast feed
         </ActionButton>
         <ActionButton
           onClick={() => setPanel("bottle")}
+          onLongPress={() => repeatLast(["bottle_feed"], "Bottle")}
           icon={<BottleIcon />}
+          hint="hold to repeat"
         >
           Bottle feed
         </ActionButton>
@@ -155,7 +311,12 @@ export function ActionGrid({
         </ActionButton>
       </div>
 
-      <ActionButton onClick={() => setPanel("pump")} icon={<PumpIcon />}>
+      <ActionButton
+        onClick={() => setPanel("pump")}
+        onLongPress={() => repeatLast(["pump"], "Pump")}
+        icon={<PumpIcon />}
+        hint="hold to repeat"
+      >
         Pump
       </ActionButton>
 
@@ -204,25 +365,60 @@ export function ActionGrid({
 
 function ActionButton({
   onClick,
+  onLongPress,
   children,
   highlight,
   icon,
+  hint,
 }: {
   onClick: () => void;
+  onLongPress?: () => void;
   children: ReactNode;
   highlight?: boolean;
   icon?: ReactNode;
+  hint?: string;
 }) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggeredRef = useRef(false);
+
+  function startHold() {
+    if (!onLongPress) return;
+    triggeredRef.current = false;
+    timerRef.current = setTimeout(() => {
+      triggeredRef.current = true;
+      onLongPress();
+    }, 550);
+  }
+  function cancelHold() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => {
+        if (triggeredRef.current) {
+          triggeredRef.current = false;
+          return;
+        }
+        onClick();
+      }}
+      onPointerDown={startHold}
+      onPointerUp={cancelHold}
+      onPointerCancel={cancelHold}
+      onPointerLeave={cancelHold}
+      onContextMenu={(e) => {
+        if (onLongPress) e.preventDefault();
+      }}
       style={{
         touchAction: "manipulation",
         WebkitTapHighlightColor: "transparent",
       }}
       className={
-        "min-h-[88px] rounded-3xl px-4 py-3 text-base font-semibold shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] active:shadow-sm flex flex-col items-center justify-center gap-1.5 " +
+        "min-h-[88px] rounded-3xl px-4 py-3 text-base font-semibold shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] active:shadow-sm flex flex-col items-center justify-center gap-1 " +
         (highlight
           ? "bg-accent text-white hover:brightness-105"
           : "bg-surface border border-accent-soft text-foreground hover:border-accent/60 hover:-translate-y-px")
@@ -230,6 +426,9 @@ function ActionButton({
     >
       {icon}
       <span>{children}</span>
+      {hint && (
+        <span className="text-[9px] text-muted font-normal">{hint}</span>
+      )}
     </button>
   );
 }

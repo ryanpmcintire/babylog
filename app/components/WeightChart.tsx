@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { formatWeightGrams } from "@/lib/events";
 import { LILY_BIRTHDATE } from "@/lib/age";
 import { weightPercentileGrams } from "@/lib/norms";
 import { useBoolPref } from "@/lib/prefs";
+import { writeEvent } from "@/lib/useEvents";
 
 const DAYS_PROJECTION = 14;
 const REGRESSION_MIN_DAY = 7;
@@ -29,6 +30,7 @@ function shortWeight(g: number): string {
 export function WeightChart({ events }: { events: BabyEvent[] }) {
   const [hovered, setHovered] = useState<WeightPoint | null>(null);
   const [showCurves] = useBoolPref("showGrowthCurves");
+  const [logOpen, setLogOpen] = useState(false);
 
   const points = useMemo<WeightPoint[]>(() => {
     const weights: WeightPoint[] = [];
@@ -99,14 +101,24 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
 
   if (!latest) {
     return (
-      <div className="w-full rounded-3xl border border-accent-soft bg-surface p-5 shadow-sm flex flex-col gap-2">
-        <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
-          Weight
-        </h2>
-        <p className="text-sm text-muted">
-          No weights logged yet. Add one from Settings.
-        </p>
-      </div>
+      <>
+        <div className="w-full rounded-3xl border border-accent-soft bg-surface p-5 shadow-sm flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
+              Weight
+            </h2>
+            <button
+              type="button"
+              onClick={() => setLogOpen(true)}
+              className="rounded-full border border-accent-soft bg-surface px-3 py-1 text-xs font-semibold text-foreground hover:border-accent/60 hover:shadow-sm transition-all"
+            >
+              + Log weight
+            </button>
+          </div>
+          <p className="text-sm text-muted">No weights logged yet.</p>
+        </div>
+        {logOpen && <WeightLogSheet onClose={() => setLogOpen(false)} />}
+      </>
     );
   }
 
@@ -159,15 +171,25 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
 
   return (
     <div className="w-full rounded-3xl border border-accent-soft bg-surface p-5 shadow-sm flex flex-col gap-3">
-      <div className="flex items-baseline justify-between">
-        <h2 className="text-xs uppercase tracking-[0.2em] text-muted">Weight</h2>
-        {gPerDay != null && (
-          <span className="text-[10px] text-muted">
-            ≈ {gPerDay > 0 ? "+" : ""}
-            {Math.round(gPerDay)} g/day
-          </span>
-        )}
+      <div className="flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-xs uppercase tracking-[0.2em] text-muted">Weight</h2>
+          {gPerDay != null && (
+            <span className="text-[10px] text-muted">
+              ≈ {gPerDay > 0 ? "+" : ""}
+              {Math.round(gPerDay)} g/day
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setLogOpen(true)}
+          className="rounded-full border border-accent-soft bg-surface px-3 py-1 text-xs font-semibold text-foreground hover:border-accent/60 hover:shadow-sm transition-all"
+        >
+          + Log weight
+        </button>
       </div>
+      {logOpen && <WeightLogSheet onClose={() => setLogOpen(false)} />}
 
       <div className="flex items-baseline gap-2">
         <span className="text-2xl font-bold tabular-nums text-accent">
@@ -357,6 +379,157 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
           early points aren&rsquo;t used).
         </p>
       )}
+    </div>
+  );
+}
+
+function WeightLogSheet({ onClose }: { onClose: () => void }) {
+  const [lb, setLb] = useState("");
+  const [oz, setOz] = useState("");
+  const [grams, setGrams] = useState("");
+  const [when, setWhen] = useState(() => {
+    const d = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    if (busy) return;
+    const g = grams.trim()
+      ? Number(grams)
+      : lb.trim() || oz.trim()
+        ? Math.round(
+            (Number(lb || 0) * 16 + Number(oz || 0)) * 28.349523125,
+          )
+        : NaN;
+    if (!Number.isFinite(g) || g <= 0) {
+      setError("Enter a weight in grams or lb/oz.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await writeEvent({ type: "weight", weight_grams: g }, new Date(when));
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <WeightSheet title="Log weight" onClose={onClose}>
+      <div>
+        <label className="text-xs uppercase tracking-wider text-muted">
+          When
+        </label>
+        <input
+          type="datetime-local"
+          value={when}
+          onChange={(e) => setWhen(e.target.value)}
+          className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground mt-1"
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <div className="flex-1">
+          <label className="text-xs text-muted">lb</label>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            value={lb}
+            onChange={(e) => {
+              setLb(e.target.value);
+              if (e.target.value) setGrams("");
+            }}
+            className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+          />
+        </div>
+        <div className="flex-1">
+          <label className="text-xs text-muted">oz</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step="0.1"
+            value={oz}
+            onChange={(e) => {
+              setOz(e.target.value);
+              if (e.target.value) setGrams("");
+            }}
+            className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs text-muted">Or grams</label>
+        <input
+          type="number"
+          inputMode="numeric"
+          min={1}
+          step={1}
+          placeholder="e.g. 3450"
+          value={grams}
+          onChange={(e) => {
+            setGrams(e.target.value);
+            if (e.target.value) {
+              setLb("");
+              setOz("");
+            }
+          }}
+          className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+        />
+      </div>
+
+      {error && <p className="text-xs text-rose-600">{error}</p>}
+
+      <button
+        type="button"
+        onClick={submit}
+        disabled={busy}
+        className="w-full rounded-2xl bg-accent px-4 py-3 text-base font-bold text-white disabled:opacity-40"
+      >
+        {busy ? "Saving…" : "Log weight"}
+      </button>
+    </WeightSheet>
+  );
+}
+
+function WeightSheet({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-surface p-5 shadow-lg flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+          <button
+            onClick={onClose}
+            className="text-sm text-muted underline decoration-dotted underline-offset-4"
+          >
+            Close
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }

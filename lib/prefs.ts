@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 
 const PREFIX = "babylog.pref.";
 
-type PrefKey = "showGrowthCurves";
+type PrefKey = "showGrowthCurves" | "tonightMode";
 
 const DEFAULTS: Record<PrefKey, boolean> = {
   showGrowthCurves: false,
+  tonightMode: false,
 };
 
 function read(key: PrefKey): boolean {
