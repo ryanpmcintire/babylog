@@ -10,7 +10,7 @@ export function Trends({ events }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
 
   const buckets = useMemo(
-    () => buildDailyBuckets(events, days),
+    () => buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 }),
     [events, days],
   );
 
@@ -35,10 +35,10 @@ export function Trends({ events }: { events: BabyEvent[] }) {
               type="button"
               onClick={() => setDays(r)}
               className={
-                "rounded-full px-3 py-1 text-xs font-semibold border transition " +
+                "rounded-full px-3 py-1 text-xs font-semibold border transition-all duration-150 hover:shadow-sm active:scale-[0.95] " +
                 (days === r
                   ? "bg-accent text-white border-accent"
-                  : "bg-surface text-muted border-accent-soft")
+                  : "bg-surface text-muted border-accent-soft hover:border-accent/60 hover:text-foreground")
               }
             >
               {r}d
@@ -100,8 +100,11 @@ function DailyBars({
   formatValue: (v: number) => string;
 }) {
   const max = Math.max(1, ...values);
-  const total = values.reduce((a, b) => a + b, 0);
-  const avg = total / values.length;
+  const active = values.filter((v) => v > 0);
+  const avg =
+    active.length > 0
+      ? active.reduce((a, b) => a + b, 0) / active.length
+      : 0;
 
   return (
     <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">

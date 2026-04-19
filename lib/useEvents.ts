@@ -72,7 +72,8 @@ export type NewEventPayload =
   | { type: "diaper_wet" }
   | { type: "diaper_dirty" }
   | { type: "sleep_start" }
-  | { type: "sleep_end" };
+  | { type: "sleep_end" }
+  | { type: "weight"; weight_grams: number; notes?: string };
 
 export async function writeEvent(
   payload: NewEventPayload,

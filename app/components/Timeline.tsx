@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import {
   buildMarkers,
@@ -36,7 +36,12 @@ function shortDayLabel(d: Date, today: Date): string {
 
 export function Timeline({ events }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
-  const now = new Date();
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setTick(Date.now()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+  const now = new Date(tick);
 
   const dayList = useMemo(() => {
     const out: { date: Date; key: string; label: string }[] = [];
@@ -55,7 +60,7 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
   }, [days, events.length]);
 
   const { sleepByDay, markersByDay } = useMemo(() => {
-    const sleeps = buildSleepSegments(events, now);
+    const sleeps = buildSleepSegments(events, now, { inferBufferMin: 10 });
     const markers = buildMarkers(events);
     const sMap = new Map<string, SleepSegment[]>();
     const mMap = new Map<string, Marker[]>();
@@ -88,10 +93,10 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
               type="button"
               onClick={() => setDays(r)}
               className={
-                "rounded-full px-3 py-1 text-xs font-semibold border transition " +
+                "rounded-full px-3 py-1 text-xs font-semibold border transition-all duration-150 hover:shadow-sm active:scale-[0.95] " +
                 (days === r
                   ? "bg-accent text-white border-accent"
-                  : "bg-surface text-muted border-accent-soft")
+                  : "bg-surface text-muted border-accent-soft hover:border-accent/60 hover:text-foreground")
               }
             >
               {r}d
@@ -102,13 +107,17 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
       <Legend />
       <div className="flex flex-col gap-0 mt-2">
         <AxisRow />
-        {dayList.map((d) => (
+        {dayList.map((d, idx) => (
           <DayRow
             key={d.key}
             label={d.label}
             sleeps={sleepByDay.get(d.key) ?? []}
             markers={markersByDay.get(d.key) ?? []}
             days={days}
+            isToday={idx === 0}
+            nowMin={
+              idx === 0 ? now.getHours() * 60 + now.getMinutes() : null
+            }
           />
         ))}
       </div>
@@ -116,20 +125,142 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
   );
 }
 
+const NIGHT_START_HOUR = 20;
+const NIGHT_END_HOUR = 6;
+const DAY_CENTER_HOUR = (NIGHT_END_HOUR + NIGHT_START_HOUR) / 2; // 13 — noon-ish
+
+function DayNightBackdrop({ rowHeight }: { rowHeight: number }) {
+  const iconSize = Math.max(10, Math.min(rowHeight - 8, 22));
+  return (
+    <>
+      <span
+        className="absolute top-0 bottom-0 pointer-events-none flex items-center justify-center"
+        style={{
+          left: 0,
+          width: `${(NIGHT_END_HOUR / 24) * 100}%`,
+          background: "rgba(29, 25, 48, 0.08)",
+        }}
+      >
+        <MoonGlyph size={iconSize} />
+      </span>
+      <span
+        className="absolute top-0 bottom-0 pointer-events-none flex items-center justify-center"
+        style={{
+          left: `${(DAY_CENTER_HOUR / 24) * 100}%`,
+          width: iconSize + 6,
+          marginLeft: -(iconSize + 6) / 2,
+        }}
+      >
+        <SunGlyph size={iconSize} />
+      </span>
+      <span
+        className="absolute top-0 bottom-0 pointer-events-none flex items-center justify-center"
+        style={{
+          left: `${(NIGHT_START_HOUR / 24) * 100}%`,
+          right: 0,
+          background: "rgba(29, 25, 48, 0.08)",
+        }}
+      >
+        <MoonGlyph size={iconSize} />
+      </span>
+    </>
+  );
+}
+
+function SunGlyph({ size }: { size: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      style={{ opacity: 0.32, color: "var(--foreground)" }}
+    >
+      <circle cx="12" cy="12" r="4" fill="currentColor" />
+      <g
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        fill="none"
+      >
+        <line x1="12" y1="2.5" x2="12" y2="5" />
+        <line x1="12" y1="19" x2="12" y2="21.5" />
+        <line x1="2.5" y1="12" x2="5" y2="12" />
+        <line x1="19" y1="12" x2="21.5" y2="12" />
+        <line x1="5.3" y1="5.3" x2="7" y2="7" />
+        <line x1="17" y1="17" x2="18.7" y2="18.7" />
+        <line x1="18.7" y1="5.3" x2="17" y2="7" />
+        <line x1="7" y1="17" x2="5.3" y2="18.7" />
+      </g>
+    </svg>
+  );
+}
+
+function MoonGlyph({ size }: { size: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      style={{ opacity: 0.35, color: "var(--foreground)" }}
+    >
+      <path
+        d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
 const MARKER_COLORS = {
   sleep: "var(--color-sage-400)",
-  feed: "#bd7d7d", // rose — warm, distinct from sleep green
-  diaper: "#c49b5b", // amber — distinct earthy tone
-  pump: "#7b8ea3", // slate — distinct cool tone
+  feed: "#bd7d7d", // rose — warm pink
+  diaper: "#7689b8", // dusty periwinkle blue — cool, opposite the warm feed pink
+  pump: "#c49b5b", // ochre gold — warm but yellow, distinct from feed red
 };
 
 function Legend() {
   return (
-    <div className="flex gap-3 flex-wrap text-[10px] text-muted">
-      <LegendDot color={MARKER_COLORS.sleep} label="sleep" />
+    <div className="flex gap-3 flex-wrap text-[10px] text-muted items-center">
+      <span className="flex items-center gap-1">
+        <span
+          className="inline-block w-4 h-3 rounded-full"
+          style={{
+            background: MARKER_COLORS.sleep,
+            opacity: 0.7,
+            border: "2px solid var(--marker-halo)",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
+          }}
+        />
+        sleep
+      </span>
       <LegendDot color={MARKER_COLORS.feed} label="feed" />
-      <LegendDot color={MARKER_COLORS.diaper} label="diaper" />
-      <LegendDot color={MARKER_COLORS.pump} label="pump" />
+      <span className="flex items-center gap-1">
+        <span
+          className="inline-block w-3 h-3"
+          style={{
+            background: MARKER_COLORS.diaper,
+            borderRadius: "2px",
+            border: "2px solid var(--marker-halo)",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
+          }}
+        />
+        diaper
+      </span>
+      <span className="flex items-center gap-1">
+        <span
+          className="inline-block w-3 h-3"
+          style={{
+            background: MARKER_COLORS.pump,
+            borderRadius: "1px",
+            transform: "rotate(45deg)",
+            border: "2px solid var(--marker-halo)",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
+          }}
+        />
+        pump
+      </span>
     </div>
   );
 }
@@ -138,8 +269,12 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   return (
     <span className="flex items-center gap-1">
       <span
-        className="inline-block w-2 h-2 rounded-full"
-        style={{ background: color }}
+        className="inline-block w-3 h-3 rounded-full"
+        style={{
+          background: color,
+          border: "2px solid var(--marker-halo)",
+          boxShadow: "0 0 0 1px rgba(0,0,0,0.08)",
+        }}
       />
       {label}
     </span>
@@ -167,17 +302,42 @@ function DayRow({
   sleeps,
   markers,
   days,
+  isToday,
+  nowMin,
 }: {
   label: string;
   sleeps: SleepSegment[];
   markers: Marker[];
   days: number;
+  isToday?: boolean;
+  nowMin?: number | null;
 }) {
   const { rowHeight, padY } = rowMetrics(days);
+
+  // Detect adjacency: sort segments by start; if one ends ~where another starts,
+  // square off the touching ends so they read as one continuous bar.
+  const CONNECT_EPSILON = 2; // minutes
+  const sortedByStart = [...sleeps].sort((a, b) => a.startMin - b.startMin);
+  const connections = new Map<SleepSegment, { left: boolean; right: boolean }>();
+  for (let i = 0; i < sortedByStart.length; i++) {
+    const cur = sortedByStart[i]!;
+    const prev = sortedByStart[i - 1];
+    const next = sortedByStart[i + 1];
+    connections.set(cur, {
+      left: !!prev && Math.abs(cur.startMin - prev.endMin) <= CONNECT_EPSILON,
+      right: !!next && Math.abs(next.startMin - cur.endMin) <= CONNECT_EPSILON,
+    });
+  }
+
   return (
     <div className="flex items-center" style={{ height: rowHeight }}>
       <div className="w-10 text-[10px] text-muted truncate">{label}</div>
       <div className="relative flex-1 h-full">
+        <div
+          className="absolute inset-0"
+          style={{ overflow: "hidden" }}
+        >
+        <DayNightBackdrop rowHeight={rowHeight} />
         {AXIS_TICKS.slice(1, -1).map((h) => (
           <span
             key={h}
@@ -186,56 +346,99 @@ function DayRow({
           />
         ))}
 
-        {sleeps.map((s, i) => (
-          <div
-            key={`s${i}`}
-            className="absolute rounded-full"
-            style={{
-              left: `${(s.startMin / 1440) * 100}%`,
-              width: `${((s.endMin - s.startMin) / 1440) * 100}%`,
-              top: padY,
-              bottom: padY,
-              background: "var(--color-sage-400)",
-              opacity: s.ongoing ? 0.55 : 0.9,
-            }}
-            title={`Sleep ${minutesToLabel(s.startMin)} – ${minutesToLabel(s.endMin)}${s.ongoing ? " (ongoing)" : ""}`}
-          />
-        ))}
+        {sortedByStart.map((s, i) => {
+          const conn = connections.get(s) ?? { left: false, right: false };
+          return (
+            <div
+              key={`s${i}`}
+              className="absolute"
+              style={{
+                left: `${(s.startMin / 1440) * 100}%`,
+                width: `${((s.endMin - s.startMin) / 1440) * 100}%`,
+                top: padY,
+                bottom: padY,
+                background: "var(--color-sage-300)",
+                opacity: s.ongoing ? 0.5 : 0.7,
+                border: "2px solid var(--marker-halo)",
+                borderLeftWidth: conn.left ? 0 : 2,
+                borderRightWidth: conn.right ? 0 : 2,
+                borderTopLeftRadius: conn.left ? 0 : 999,
+                borderBottomLeftRadius: conn.left ? 0 : 999,
+                borderTopRightRadius: conn.right ? 0 : 999,
+                borderBottomRightRadius: conn.right ? 0 : 999,
+              }}
+              title={`Sleep ${minutesToLabel(s.startMin)} – ${minutesToLabel(s.endMin)}${s.ongoing ? " (ongoing)" : ""}`}
+            />
+          );
+        })}
 
         {markers.map((m, i) => (
           <MarkerDot key={`m${i}`} marker={m} days={days} />
         ))}
+        </div>
+
+        {isToday && nowMin != null && (
+          <span
+            className="absolute pointer-events-none"
+            style={{
+              left: `${(nowMin / 1440) * 100}%`,
+              top: 0,
+              width: 0,
+              height: 0,
+              transform: "translate(-50%, -100%)",
+              borderLeft: "5px solid transparent",
+              borderRight: "5px solid transparent",
+              borderTop: "6px solid var(--foreground)",
+              zIndex: 2,
+            }}
+            title={`Now — ${minutesToLabel(nowMin)}`}
+          />
+        )}
       </div>
     </div>
   );
 }
 
 function MarkerDot({ marker, days }: { marker: Marker; days: number }) {
-  const color =
-    marker.kind === "breast" || marker.kind === "bottle"
-      ? MARKER_COLORS.feed
-      : marker.kind === "pump"
-        ? MARKER_COLORS.pump
-        : MARKER_COLORS.diaper;
+  const isPump = marker.kind === "pump";
+  const isDiaper =
+    marker.kind === "diaper_wet" || marker.kind === "diaper_dirty";
+  const isFeed = marker.kind === "breast" || marker.kind === "bottle";
 
-  const baseSize =
-    marker.kind === "pump" ||
-    marker.kind === "diaper_wet" ||
-    marker.kind === "diaper_dirty"
-      ? 7
-      : 9;
+  const color = isFeed
+    ? MARKER_COLORS.feed
+    : isPump
+      ? MARKER_COLORS.pump
+      : MARKER_COLORS.diaper;
+
+  const baseSize = isFeed ? 12 : 11;
   const size = days <= 7 ? baseSize : days <= 14 ? baseSize - 2 : baseSize - 3;
+
+  // Three vertical tiers so different event types never land on top of each
+  // other. Feeds highest, diapers middle, pumps lowest.
+  const topPercent = isFeed ? 28 : isPump ? 76 : 52;
+
+  // Three shapes: circle (feed), rounded square (diaper), diamond (pump).
+  const shapeStyle: React.CSSProperties = isFeed
+    ? { borderRadius: "50%" }
+    : isDiaper
+      ? { borderRadius: "2px" }
+      : { borderRadius: "1px" };
 
   return (
     <span
-      className="absolute rounded-full border border-white/50 shadow-sm"
+      className="absolute shadow-sm"
       style={{
         left: `${(marker.atMin / 1440) * 100}%`,
-        top: "50%",
+        top: `${topPercent}%`,
         width: size,
         height: size,
-        transform: "translate(-50%, -50%)",
+        transform: isPump
+          ? "translate(-50%, -50%) rotate(45deg)"
+          : "translate(-50%, -50%)",
         background: color,
+        border: "2px solid var(--marker-halo)",
+        ...shapeStyle,
       }}
       title={`${marker.kind} at ${minutesToLabel(marker.atMin)}`}
     />

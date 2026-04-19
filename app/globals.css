@@ -38,6 +38,8 @@
   --accent: var(--color-sage-600);
   --accent-soft: var(--color-sage-100);
   --muted: var(--color-ink-500);
+  --marker-halo: #ffffff;
+  --divider: rgba(85, 107, 79, 0.35);
   color-scheme: light;
 }
 
@@ -49,6 +51,8 @@
     --accent: var(--color-sage-300);
     --accent-soft: var(--color-sage-800);
     --muted: #a79e95;
+    --marker-halo: var(--color-cream-100);
+    --divider: rgba(222, 216, 208, 0.15);
     color-scheme: dark;
   }
 }
@@ -60,6 +64,7 @@
   --accent: var(--color-sage-300);
   --accent-soft: var(--color-sage-800);
   --muted: #a79e95;
+  --marker-halo: var(--color-cream-100);
   color-scheme: dark;
 }
 

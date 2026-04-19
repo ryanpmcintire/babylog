@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatLiveElapsed } from "@/lib/format";
 import { writeEvent } from "@/lib/useEvents";
+import { currentSleepState } from "@/lib/aggregates";
 import type { BabyEvent } from "@/lib/events";
 
 export function SleepControl({ events }: { events: BabyEvent[] }) {
@@ -15,7 +16,8 @@ export function SleepControl({ events }: { events: BabyEvent[] }) {
     return () => clearInterval(id);
   }, []);
 
-  const { sleeping, since } = currentSleepState(events);
+  const state = currentSleepState(events, 10, new Date(now));
+  const { sleeping, since, source } = state;
 
   async function toggle() {
     if (busy) return;
@@ -47,17 +49,21 @@ export function SleepControl({ events }: { events: BabyEvent[] }) {
           WebkitTapHighlightColor: "transparent",
         }}
         className={
-          "w-full min-h-[96px] rounded-3xl px-5 py-4 shadow-sm transition active:scale-[0.99] flex items-center justify-between gap-4 " +
+          "w-full min-h-[96px] rounded-3xl px-5 py-4 shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.98] active:shadow-sm flex items-center justify-between gap-4 " +
           (sleeping
-            ? "bg-accent text-white"
-            : "bg-surface border border-accent-soft text-foreground")
+            ? "bg-accent text-white hover:brightness-105"
+            : "bg-surface border border-accent-soft text-foreground hover:border-accent/60 hover:-translate-y-px")
         }
       >
         <span className="flex items-center gap-3">
           <SleepIcon sleeping={sleeping} />
           <span className="flex flex-col items-start text-left">
             <span className="text-base font-bold">
-              {sleeping ? "Wake up" : "Put down for sleep"}
+              {sleeping
+                ? source === "inferred"
+                  ? "Mark awake"
+                  : "Wake up"
+                : "Put down for sleep"}
             </span>
             <span
               className={
@@ -65,7 +71,9 @@ export function SleepControl({ events }: { events: BabyEvent[] }) {
               }
             >
               {sleeping
-                ? "tap when she wakes"
+                ? source === "inferred"
+                  ? "assumed asleep between feeds"
+                  : "tap when she wakes"
                 : "tap when she's in the bassinet"}
             </span>
           </span>
@@ -113,17 +121,3 @@ function SleepIcon({ sleeping }: { sleeping: boolean }) {
   );
 }
 
-function currentSleepState(events: BabyEvent[]): {
-  sleeping: boolean;
-  since: Date | null;
-} {
-  for (const e of events) {
-    if (e.type === "sleep_start") {
-      return { sleeping: true, since: e.occurred_at.toDate() };
-    }
-    if (e.type === "sleep_end") {
-      return { sleeping: false, since: null };
-    }
-  }
-  return { sleeping: false, since: null };
-}

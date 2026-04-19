@@ -125,16 +125,23 @@ export function ActionGrid({
   return (
     <div className="w-full flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3">
-        <ActionButton onClick={() => setPanel("breast")}>
+        <ActionButton
+          onClick={() => setPanel("breast")}
+          icon={<HeartIcon />}
+        >
           Breast feed
         </ActionButton>
-        <ActionButton onClick={() => setPanel("bottle")}>
+        <ActionButton
+          onClick={() => setPanel("bottle")}
+          icon={<BottleIcon />}
+        >
           Bottle feed
         </ActionButton>
         <ActionButton
           onClick={() =>
             logDiaper({ type: "diaper_wet" }, "Wet diaper logged")
           }
+          icon={<DropIcon />}
         >
           Wet diaper
         </ActionButton>
@@ -142,12 +149,15 @@ export function ActionGrid({
           onClick={() =>
             logDiaper({ type: "diaper_dirty" }, "Dirty diaper logged")
           }
+          icon={<SwirlIcon />}
         >
           Dirty diaper
         </ActionButton>
       </div>
 
-      <ActionButton onClick={() => setPanel("pump")}>Pump</ActionButton>
+      <ActionButton onClick={() => setPanel("pump")} icon={<PumpIcon />}>
+        Pump
+      </ActionButton>
 
       {backdate && (
         <div className="grid grid-cols-2 gap-3">
@@ -196,10 +206,12 @@ function ActionButton({
   onClick,
   children,
   highlight,
+  icon,
 }: {
   onClick: () => void;
   children: ReactNode;
   highlight?: boolean;
+  icon?: ReactNode;
 }) {
   return (
     <button
@@ -210,14 +222,102 @@ function ActionButton({
         WebkitTapHighlightColor: "transparent",
       }}
       className={
-        "min-h-[88px] rounded-3xl px-4 py-3 text-base font-semibold shadow-sm transition active:scale-[0.98] " +
+        "min-h-[88px] rounded-3xl px-4 py-3 text-base font-semibold shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] active:shadow-sm flex flex-col items-center justify-center gap-1.5 " +
         (highlight
-          ? "bg-accent text-white"
-          : "bg-surface border border-accent-soft text-foreground")
+          ? "bg-accent text-white hover:brightness-105"
+          : "bg-surface border border-accent-soft text-foreground hover:border-accent/60 hover:-translate-y-px")
       }
     >
-      {children}
+      {icon}
+      <span>{children}</span>
     </button>
+  );
+}
+
+function HeartIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+    </svg>
+  );
+}
+
+function BottleIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M10 2h4v3h-4z" />
+      <path d="M9 5h6l1.8 3v12.2a.8.8 0 0 1-.8.8H8a.8.8 0 0 1-.8-.8V8z" />
+      <line x1="9.5" y1="13" x2="14.5" y2="13" />
+    </svg>
+  );
+}
+
+function DropIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 2.5c-.3 0-.58.15-.75.4-.7 1-5.75 8.46-5.75 12.1a6.5 6.5 0 0 0 13 0c0-3.64-5.05-11.1-5.75-12.1a.92.92 0 0 0-.75-.4z" />
+    </svg>
+  );
+}
+
+function SwirlIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M12 3a4 4 0 0 0-3.5 5.95A4 4 0 0 0 6 16.5a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4 4 4 0 0 0-2.5-7.55A4 4 0 0 0 12 3z" />
+    </svg>
+  );
+}
+
+function PumpIcon() {
+  // Stylized breast pump: circular flange on top, narrowing neck,
+  // collection bottle on the bottom.
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <ellipse cx="12" cy="6.5" rx="4.5" ry="3.5" />
+      <path d="M10 10 L10 13 L9 14 L9 20 A1 1 0 0 0 10 21 L14 21 A1 1 0 0 0 15 20 L15 14 L14 13 L14 10" />
+    </svg>
   );
 }
 
@@ -321,7 +421,7 @@ function BreastPanel({
           type="button"
           onClick={confirm}
           disabled={!any}
-          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm transition-all duration-150 hover:shadow-md hover:brightness-105 active:scale-[0.98] active:shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-sm disabled:hover:brightness-100"
         >
           {!any
             ? "Pick an outcome for at least one side"
@@ -366,10 +466,10 @@ function SidePicker({
               type="button"
               onClick={() => onChange(o.value)}
               className={
-                "min-h-[48px] rounded-xl text-sm font-semibold border transition active:scale-[0.98] " +
+                "min-h-[48px] rounded-xl text-sm font-semibold border transition-all duration-150 hover:shadow-sm active:scale-[0.97] " +
                 (active
                   ? "bg-accent text-white border-accent"
-                  : "bg-background text-foreground border-accent-soft")
+                  : "bg-background text-foreground border-accent-soft hover:border-accent/50")
               }
             >
               {o.label}
@@ -429,10 +529,10 @@ function BottlePanel({
                   type="button"
                   onClick={() => toggleMilk(m.value)}
                   className={
-                    "rounded-full px-4 py-2 text-sm font-medium border transition " +
+                    "rounded-full px-4 py-2 text-sm font-medium border transition-all duration-150 hover:shadow-sm active:scale-[0.97] " +
                     (active
                       ? "bg-accent text-white border-accent"
-                      : "bg-surface text-foreground border-accent-soft")
+                      : "bg-surface text-foreground border-accent-soft hover:border-accent/50")
                   }
                 >
                   {m.label}
@@ -458,10 +558,10 @@ function BottlePanel({
                     setCustomMl("");
                   }}
                   className={
-                    "min-h-[64px] rounded-2xl font-semibold active:scale-[0.98] flex flex-col items-center justify-center border transition " +
+                    "min-h-[64px] rounded-2xl font-semibold flex flex-col items-center justify-center border transition-all duration-150 hover:shadow-sm active:scale-[0.97] " +
                     (active
                       ? "bg-accent text-white border-accent"
-                      : "bg-surface text-foreground border-accent-soft")
+                      : "bg-surface text-foreground border-accent-soft hover:border-accent/50")
                   }
                 >
                   <span className="text-lg">{v} ml</span>
@@ -504,7 +604,7 @@ function BottlePanel({
           disabled={
             effectiveMl == null || effectiveMl <= 0 || milk.length === 0
           }
-          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm transition-all duration-150 hover:shadow-md hover:brightness-105 active:scale-[0.98] active:shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-sm disabled:hover:brightness-100"
         >
           {milk.length === 0
             ? "Pick at least one milk type"
@@ -603,7 +703,7 @@ function PumpPanel({
           type="button"
           onClick={confirm}
           disabled={total <= 0}
-          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm active:scale-[0.99] disabled:opacity-40 disabled:cursor-not-allowed"
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm transition-all duration-150 hover:shadow-md hover:brightness-105 active:scale-[0.98] active:shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-sm disabled:hover:brightness-100"
         >
           {total <= 0
             ? "Enter a volume"
@@ -655,10 +755,10 @@ function PumpSide({
               type="button"
               onClick={() => onSelect(v)}
               className={
-                "min-h-[44px] rounded-xl text-sm font-semibold border transition active:scale-[0.98] " +
+                "min-h-[44px] rounded-xl text-sm font-semibold border transition-all duration-150 hover:shadow-sm active:scale-[0.97] " +
                 (active
                   ? "bg-accent text-white border-accent"
-                  : "bg-background text-foreground border-accent-soft")
+                  : "bg-background text-foreground border-accent-soft hover:border-accent/50")
               }
             >
               {v}

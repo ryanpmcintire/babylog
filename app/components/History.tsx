@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import type { BabyEvent } from "@/lib/events";
-import { sideLabel } from "@/lib/events";
+import { formatWeightGrams, sideLabel } from "@/lib/events";
 import { formatLiveElapsed, formatVolume } from "@/lib/format";
 import { softDeleteEvent } from "@/lib/useEvents";
 import { useAuth } from "../providers";
@@ -72,6 +72,8 @@ function describe(event: BabyEvent): { label: string; detail?: string } {
       return { label: "Sleep started" };
     case "sleep_end":
       return { label: "Woke up" };
+    case "weight":
+      return { label: "Weight", detail: formatWeightGrams(event.weight_grams) };
   }
 }
 

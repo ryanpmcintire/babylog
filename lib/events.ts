@@ -48,6 +48,7 @@ export type BabyEvent = BaseEvent &
     | { type: "diaper_dirty" }
     | { type: "sleep_start" }
     | { type: "sleep_end" }
+    | { type: "weight"; weight_grams: number; notes?: string }
   );
 
 export const BREAST_OUTCOMES: {
@@ -66,3 +67,13 @@ export const MILK_TYPES: { value: MilkType; label: string }[] = [
 ];
 
 export const VOLUME_PRESETS_ML: number[] = [30, 60, 90, 120, 150];
+
+export function formatWeightGrams(g: number): string {
+  const pounds = g / 453.59237;
+  const totalOz = g / 28.349523125;
+  const lb = Math.floor(pounds);
+  const oz = Math.round(totalOz - lb * 16);
+  const oz16 = oz === 16 ? 0 : oz;
+  const lbOut = oz === 16 ? lb + 1 : lb;
+  return `${lbOut} lb ${oz16} oz (${g.toLocaleString()} g)`;
+}

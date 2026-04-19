@@ -4,77 +4,153 @@ import { useEffect, useState } from "react";
 import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
 import { formatElapsed, formatLiveElapsed, formatVolume } from "@/lib/format";
 import type { BabyEvent } from "@/lib/events";
+import { currentSleepState, estimateNextEvent } from "@/lib/aggregates";
 import { FunAge } from "./FunAge";
 
 type Derived = {
   lastFeed: { summary: string; at: Date } | null;
+  lastBreast: { summary: string; at: Date } | null;
+  lastPump: { summary: string; at: Date } | null;
   lastDiaper: { summary: string; at: Date } | null;
   sleepingSince: Date | null;
   lastWokeAt: Date | null;
 };
 
-function deriveState(events: BabyEvent[]): Derived {
-  // events is ordered newest-first.
-  let lastFeed: Derived["lastFeed"] = null;
-  let lastDiaper: Derived["lastDiaper"] = null;
-  let sleepingSince: Date | null = null;
-  let lastWokeAt: Date | null = null;
+const SESSION_THRESHOLD_MS = 5000;
 
-  let sleepHandled = false;
-
+function lastSession(
+  events: BabyEvent[],
+  types: BabyEvent["type"][],
+): BabyEvent[] {
+  const results: BabyEvent[] = [];
+  let anchorMs: number | null = null;
   for (const e of events) {
-    const at = e.occurred_at.toDate();
-    if (!lastFeed && (e.type === "bottle_feed" || e.type === "breast_feed")) {
-      if (e.type === "bottle_feed") {
-        lastFeed = { summary: `Bottle · ${formatVolume(e.volume_ml)}`, at };
-      } else {
-        const outcomeLabel =
-          e.outcome === "latched_fed"
-            ? "latched & fed"
-            : e.outcome === "latched_brief"
-              ? "latched briefly"
-              : "didn't latch";
-        const side = e.side
-          ? e.side === "both"
-            ? "L+R"
-            : e.side === "left"
-              ? "L"
-              : "R"
-          : "";
-        lastFeed = {
-          summary: side
-            ? `Breast (${side}) · ${outcomeLabel}`
-            : `Breast · ${outcomeLabel}`,
-          at,
-        };
+    if (!types.includes(e.type)) continue;
+    const ms = e.occurred_at.toMillis();
+    if (anchorMs === null) {
+      anchorMs = ms;
+      results.push(e);
+    } else if (Math.abs(ms - anchorMs) <= SESSION_THRESHOLD_MS) {
+      results.push(e);
+    } else {
+      break;
+    }
+  }
+  return results;
+}
+
+function shortSide(side: string | undefined): string {
+  if (!side) return "";
+  if (side === "both") return "L+R";
+  return side === "left" ? "L" : "R";
+}
+
+function shortOutcome(outcome: string): string {
+  return outcome === "latched_fed"
+    ? "fed"
+    : outcome === "latched_brief"
+      ? "brief"
+      : "no latch";
+}
+
+function summarizeBreastSession(session: BabyEvent[]): string {
+  const parts = session.map((e) => {
+    if (e.type !== "breast_feed") return "";
+    const side = shortSide(e.side);
+    const outcome = shortOutcome(e.outcome);
+    return side ? `${side} ${outcome}` : outcome;
+  });
+  return parts.join(", ");
+}
+
+function summarizePumpSession(session: BabyEvent[]): string {
+  const parts = session.map((e) => {
+    if (e.type !== "pump") return "";
+    const side = shortSide(e.side);
+    return side ? `${side} ${e.volume_ml}ml` : `${e.volume_ml}ml`;
+  });
+  const total = session.reduce(
+    (sum, e) => (e.type === "pump" ? sum + e.volume_ml : sum),
+    0,
+  );
+  const suffix = session.length > 1 ? ` (${total}ml)` : "";
+  return `${parts.join(", ")}${suffix}`;
+}
+
+function deriveState(events: BabyEvent[], now: Date): Derived {
+  const sleep = currentSleepState(events, 10, now);
+  const sleepingSince = sleep.sleeping ? sleep.since : null;
+  let lastWokeAt: Date | null = null;
+  if (!sleep.sleeping) {
+    for (const e of events) {
+      if (e.type === "sleep_end") {
+        lastWokeAt = e.occurred_at.toDate();
+        break;
       }
     }
-    if (
-      !lastDiaper &&
-      (e.type === "diaper_wet" || e.type === "diaper_dirty")
-    ) {
-      lastDiaper = {
-        summary: e.type === "diaper_wet" ? "Wet" : "Dirty",
+  }
+
+  let lastFeed: Derived["lastFeed"] = null;
+  let lastBreast: Derived["lastBreast"] = null;
+  let lastPump: Derived["lastPump"] = null;
+  let lastDiaper: Derived["lastDiaper"] = null;
+
+  const feedSession = lastSession(events, ["breast_feed", "bottle_feed"]);
+  if (feedSession.length > 0) {
+    const anchor = feedSession[0]!;
+    const at = anchor.occurred_at.toDate();
+    if (anchor.type === "bottle_feed") {
+      lastFeed = { summary: `Bottle · ${formatVolume(anchor.volume_ml)}`, at };
+    } else {
+      // Breast feed: group may contain L + R events.
+      const breastOnly = feedSession.filter((e) => e.type === "breast_feed");
+      lastFeed = {
+        summary: `Breast · ${summarizeBreastSession(breastOnly)}`,
         at,
       };
     }
-    if (!sleepHandled && (e.type === "sleep_start" || e.type === "sleep_end")) {
-      if (e.type === "sleep_start") {
-        sleepingSince = at;
-      } else {
-        lastWokeAt = at;
-      }
-      sleepHandled = true;
-    }
-    if (lastFeed && lastDiaper && sleepHandled) break;
   }
 
-  return { lastFeed, lastDiaper, sleepingSince, lastWokeAt };
+  const breastSession = lastSession(events, ["breast_feed"]);
+  if (breastSession.length > 0) {
+    const at = breastSession[0]!.occurred_at.toDate();
+    lastBreast = { summary: summarizeBreastSession(breastSession), at };
+  }
+
+  const pumpSession = lastSession(events, ["pump"]);
+  if (pumpSession.length > 0) {
+    const at = pumpSession[0]!.occurred_at.toDate();
+    lastPump = { summary: summarizePumpSession(pumpSession), at };
+  }
+
+  for (const e of events) {
+    if (e.type === "diaper_wet" || e.type === "diaper_dirty") {
+      lastDiaper = {
+        summary: e.type === "diaper_wet" ? "Wet" : "Dirty",
+        at: e.occurred_at.toDate(),
+      };
+      break;
+    }
+  }
+
+  return {
+    lastFeed,
+    lastBreast,
+    lastPump,
+    lastDiaper,
+    sleepingSince,
+    lastWokeAt,
+  };
 }
 
 export function Dashboard({ events }: { events: BabyEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
-  const derived = deriveState(events);
+  const derived = deriveState(events, new Date(now));
+  const nextFeed = estimateNextEvent(events, ["breast_feed", "bottle_feed"]);
+  const nextDiaper = estimateNextEvent(events, [
+    "diaper_wet",
+    "diaper_dirty",
+  ]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -82,6 +158,14 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
   }, []);
 
   const age = formatBabyAge(LILY_BIRTHDATE, new Date(now));
+
+  function formatETA(target: Date): { text: string; overdue: boolean } {
+    const diffMs = target.getTime() - now;
+    if (diffMs < 0) {
+      return { text: `overdue ${formatElapsed(-diffMs, true)}`, overdue: true };
+    }
+    return { text: `in ${formatElapsed(diffMs, true)}`, overdue: false };
+  }
 
   return (
     <div className="w-full flex flex-col items-center text-center gap-4">
@@ -109,6 +193,24 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           detail={derived.lastFeed?.summary}
         />
         <Row
+          label="Last breast"
+          value={
+            derived.lastBreast
+              ? `${formatElapsed(now - derived.lastBreast.at.getTime())}`
+              : "—"
+          }
+          detail={derived.lastBreast?.summary}
+        />
+        <Row
+          label="Last pump"
+          value={
+            derived.lastPump
+              ? `${formatElapsed(now - derived.lastPump.at.getTime())}`
+              : "—"
+          }
+          detail={derived.lastPump?.summary}
+        />
+        <Row
           label="Last diaper"
           value={
             derived.lastDiaper
@@ -117,19 +219,45 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           }
           detail={derived.lastDiaper?.summary}
         />
-        <Row
-          label={derived.sleepingSince ? "Sleeping" : "Awake"}
-          value={
-            derived.sleepingSince
-              ? formatLiveElapsed(now - derived.sleepingSince.getTime())
-              : derived.lastWokeAt
-                ? formatElapsed(now - derived.lastWokeAt.getTime(), true)
-                : "—"
-          }
-          detail={derived.sleepingSince ? "since" : undefined}
-          highlight={Boolean(derived.sleepingSince)}
-        />
+        {derived.sleepingSince && (
+          <Row
+            label="Sleeping"
+            value={formatLiveElapsed(now - derived.sleepingSince.getTime())}
+            detail="since"
+            highlight
+          />
+        )}
       </div>
+
+      {(nextFeed || nextDiaper) && (
+        <div className="w-full grid grid-cols-1 gap-1 rounded-2xl border border-accent-soft bg-surface px-4 py-3">
+          <p className="text-[10px] uppercase tracking-wider text-muted">
+            Predicted next (based on recent intervals)
+          </p>
+          {nextFeed && (
+            <Row
+              label="Next feed"
+              value={formatETA(nextFeed.nextAt).text}
+              detail={nextFeed.nextAt.toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              highlight={formatETA(nextFeed.nextAt).overdue}
+            />
+          )}
+          {nextDiaper && (
+            <Row
+              label="Next diaper"
+              value={formatETA(nextDiaper.nextAt).text}
+              detail={nextDiaper.nextAt.toLocaleTimeString(undefined, {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              highlight={formatETA(nextDiaper.nextAt).overdue}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -164,9 +292,5 @@ function Row({
 }
 
 export function isCurrentlySleeping(events: BabyEvent[]): boolean {
-  for (const e of events) {
-    if (e.type === "sleep_start") return true;
-    if (e.type === "sleep_end") return false;
-  }
-  return false;
+  return currentSleepState(events, 10).sleeping;
 }

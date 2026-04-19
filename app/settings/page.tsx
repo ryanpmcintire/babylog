@@ -1,12 +1,56 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
 import { ALLOWED_EMAILS } from "@/lib/allowlist";
+import { writeEvent } from "@/lib/useEvents";
 import { useAuth } from "../providers";
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
+  const [weightGrams, setWeightGrams] = useState("");
+  const [weightLb, setWeightLb] = useState("");
+  const [weightOz, setWeightOz] = useState("");
+  const [measuredAt, setMeasuredAt] = useState<string>(() => {
+    const d = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [weightFlash, setWeightFlash] = useState<string | null>(null);
+  const [weightBusy, setWeightBusy] = useState(false);
+
+  async function submitWeight() {
+    if (weightBusy) return;
+    const grams = weightGrams.trim()
+      ? Number(weightGrams)
+      : weightLb.trim() || weightOz.trim()
+        ? Math.round(
+            (Number(weightLb || 0) * 16 + Number(weightOz || 0)) *
+              28.349523125,
+          )
+        : NaN;
+    if (!Number.isFinite(grams) || grams <= 0) {
+      setWeightFlash("Enter a weight in grams or lb/oz.");
+      return;
+    }
+    setWeightBusy(true);
+    try {
+      const when = new Date(measuredAt);
+      await writeEvent({ type: "weight", weight_grams: grams }, when);
+      setWeightFlash(`Logged ${grams} g`);
+      setWeightGrams("");
+      setWeightLb("");
+      setWeightOz("");
+      setTimeout(() => setWeightFlash(null), 2500);
+    } catch (err) {
+      setWeightFlash(
+        err instanceof Error ? `Couldn't save: ${err.message}` : "Couldn't save",
+      );
+    } finally {
+      setWeightBusy(false);
+    }
+  }
 
   return (
     <main className="flex flex-1 flex-col items-center px-4 py-8 sm:py-12">
@@ -36,6 +80,82 @@ export default function SettingsPage() {
             })}
           />
           <Row label="Age" value={formatBabyAge(LILY_BIRTHDATE)} />
+        </Section>
+
+        <Section title="Log weight">
+          <p className="text-xs text-muted">
+            Enter either grams or lb &amp; oz. Used for the weight chart on
+            the home page.
+          </p>
+          <label className="text-xs text-muted">When</label>
+          <input
+            type="datetime-local"
+            value={measuredAt}
+            onChange={(e) => setMeasuredAt(e.target.value)}
+            className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+          />
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="text-xs text-muted">lb</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                step={1}
+                value={weightLb}
+                onChange={(e) => {
+                  setWeightLb(e.target.value);
+                  if (e.target.value) setWeightGrams("");
+                }}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-muted">oz</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.1"
+                value={weightOz}
+                onChange={(e) => {
+                  setWeightOz(e.target.value);
+                  if (e.target.value) setWeightGrams("");
+                }}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted">Or grams</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              step={1}
+              placeholder="e.g. 3450"
+              value={weightGrams}
+              onChange={(e) => {
+                setWeightGrams(e.target.value);
+                if (e.target.value) {
+                  setWeightLb("");
+                  setWeightOz("");
+                }
+              }}
+              className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={submitWeight}
+            disabled={weightBusy}
+            className="self-start rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {weightBusy ? "Saving…" : "Log weight"}
+          </button>
+          {weightFlash && (
+            <p className="text-xs text-muted">{weightFlash}</p>
+          )}
         </Section>
 
         <Section title="Account">

@@ -10,6 +10,7 @@ import { SleepControl } from "./SleepControl";
 import { BackdateSheet } from "./BackdateSheet";
 import { Timeline } from "./Timeline";
 import { Trends } from "./Trends";
+import { WeightChart } from "./WeightChart";
 import { History } from "./History";
 import { SignOutButton } from "./SignOutButton";
 
@@ -42,12 +43,14 @@ export function HomeClient() {
           <p className="text-center text-xs text-rose-600">{error}</p>
         )}
 
-        <SleepControl events={events} />
+        <Divider />
 
         <ActionGrid
           sleeping={sleeping}
           suggestedBreastSide={suggestedBreastSide}
         />
+
+        <SleepControl events={events} />
 
         <button
           type="button"
@@ -57,7 +60,11 @@ export function HomeClient() {
           Log something for earlier…
         </button>
 
+        <Divider />
+
         <Timeline events={events} />
+
+        <WeightChart events={events} />
 
         <Trends events={events} />
 
@@ -85,5 +92,15 @@ export function HomeClient() {
         />
       )}
     </main>
+  );
+}
+
+function Divider() {
+  return (
+    <div
+      aria-hidden="true"
+      className="w-full h-px my-1"
+      style={{ background: "var(--divider)" }}
+    />
   );
 }
