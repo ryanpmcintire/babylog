@@ -7,6 +7,7 @@ import { ALLOWED_EMAILS } from "@/lib/allowlist";
 import { fetchAllEvents, writeEvent } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
 import { useAuth } from "../providers";
+import { ThemeToggle } from "../components/ThemeToggle";
 import type { BabyEvent } from "@/lib/events";
 
 export default function SettingsPage() {
@@ -96,7 +97,7 @@ export default function SettingsPage() {
             ← Home
           </Link>
           <h1 className="text-lg font-semibold text-foreground">Settings</h1>
-          <span className="w-12" />
+          <ThemeToggle />
         </div>
 
         <Section title="Baby">

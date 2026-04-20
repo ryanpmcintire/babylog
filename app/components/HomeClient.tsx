@@ -14,6 +14,7 @@ import { Trends } from "./Trends";
 import { WeightChart } from "./WeightChart";
 import { Library } from "./Library";
 import { History } from "./History";
+import { ThemeToggle } from "./ThemeToggle";
 
 type Tab = "home" | "insights" | "library";
 const TAB_STORAGE_KEY = "babylog.activeTab";
@@ -55,23 +56,33 @@ export function HomeClient() {
     setTab(readStoredTab());
   }, []);
 
+  function changeTab(t: Tab) {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, t);
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (tonightMode) {
     return (
-      <main
-        className="flex flex-1 flex-col items-center px-4 pt-8 sm:pt-12"
-        style={{ paddingBottom: "calc(40px + env(safe-area-inset-bottom))" }}
-      >
-        <div className="w-full max-w-md flex justify-end -mt-4 mb-2">
+      <main className="flex flex-1 flex-col items-center px-4 pb-8">
+        <div
+          className="w-full max-w-md flex justify-end gap-1 py-2"
+          style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
+        >
+          <ThemeToggle />
           <button
             type="button"
             onClick={() => setTonightMode(false)}
             aria-label="Exit tonight mode"
-            className="p-2 -mr-2 text-muted hover:text-foreground transition-colors"
+            className="p-2 text-muted hover:text-foreground transition-colors"
           >
             <SunExitIcon />
           </button>
         </div>
-        <div className="w-full max-w-md flex flex-col gap-6">
+        <div className="w-full max-w-md flex flex-col gap-6 pt-4">
           {error && (
             <p className="text-center text-xs text-rose-600">{error}</p>
           )}
@@ -84,98 +95,94 @@ export function HomeClient() {
           />
           <SleepControl events={events} />
           <p className="text-center text-[10px] text-muted mt-2">
-            Tonight mode — tap the icon above to exit
+            Tonight mode — tap the sun icon above to exit
           </p>
         </div>
       </main>
     );
   }
 
-  function changeTab(t: Tab) {
-    setTab(t);
-    try {
-      localStorage.setItem(TAB_STORAGE_KEY, t);
-    } catch {
-      /* ignore */
-    }
-  }
-
   return (
-    <>
-      <main
-        className="flex flex-1 flex-col items-center px-4 pt-8 sm:pt-12"
-        style={{ paddingBottom: "calc(88px + env(safe-area-inset-bottom))" }}
+    <main className="flex flex-1 flex-col items-center px-4 pb-12">
+      <div
+        className="w-full max-w-md sticky top-0 z-20 bg-background"
+        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
-        <div className="w-full max-w-md flex justify-end gap-1 -mt-4 mb-2">
-          <button
-            type="button"
-            onClick={() => setTonightMode(true)}
-            aria-label="Tonight mode"
-            className="p-2 text-muted hover:text-foreground transition-colors"
-          >
-            <MoonIcon />
-          </button>
-          <Link
-            href="/settings"
-            aria-label="Settings"
-            className="p-2 -mr-2 text-muted hover:text-foreground transition-colors"
-          >
-            <GearIcon />
-          </Link>
-        </div>
-        <div className="w-full max-w-md flex flex-col gap-6">
-          {error && (
-            <p className="text-center text-xs text-rose-600">{error}</p>
-          )}
-
-          {tab === "home" && (
-            <>
-              <Dashboard events={events} />
-              <Divider />
-              <ActionGrid
-                sleeping={sleeping}
-                suggestedBreastSide={suggestedBreastSide}
-                events={events}
-              />
-              <SleepControl events={events} />
-              <button
-                type="button"
-                onClick={() => setBackdateOpen(true)}
-                className="self-center text-xs text-muted underline decoration-dotted underline-offset-4 hover:text-foreground"
-              >
-                Log something for earlier…
-              </button>
-              <Divider />
-              <History events={events} />
-            </>
-          )}
-
-          {tab === "insights" && (
-            <>
-              <Timeline events={events} />
-              <WeightChart events={events} />
-              <Trends events={events} />
-            </>
-          )}
-
-          {tab === "library" && <Library events={events} />}
-
-          <div className="flex flex-col items-center gap-2 pt-4">
-            {loading && <p className="text-[10px] text-muted">Syncing…</p>}
+        <div className="flex items-center justify-between gap-2 py-1">
+          <TopTabs tab={tab} onChange={changeTab} />
+          <div className="flex items-center gap-0.5 shrink-0">
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={() => setTonightMode(true)}
+              aria-label="Tonight mode"
+              title="Tonight mode"
+              className="p-2 text-muted hover:text-foreground transition-colors"
+            >
+              <BedIcon />
+            </button>
+            <Link
+              href="/settings"
+              aria-label="Settings"
+              className="p-2 text-muted hover:text-foreground transition-colors"
+            >
+              <GearIcon />
+            </Link>
           </div>
         </div>
+        <div className="h-px bg-accent-soft" />
+      </div>
 
-        {backdateOpen && (
-          <BackdateSheet
-            sleeping={sleeping}
-            suggestedBreastSide={suggestedBreastSide}
-            onClose={() => setBackdateOpen(false)}
-          />
+      <div className="w-full max-w-md flex flex-col gap-6 pt-4">
+        {error && (
+          <p className="text-center text-xs text-rose-600">{error}</p>
         )}
-      </main>
 
-      <BottomNav tab={tab} onChange={changeTab} />
-    </>
+        {tab === "home" && (
+          <>
+            <Dashboard events={events} />
+            <Divider />
+            <ActionGrid
+              sleeping={sleeping}
+              suggestedBreastSide={suggestedBreastSide}
+              events={events}
+            />
+            <SleepControl events={events} />
+            <button
+              type="button"
+              onClick={() => setBackdateOpen(true)}
+              className="self-center text-xs text-muted underline decoration-dotted underline-offset-4 hover:text-foreground"
+            >
+              Log something for earlier…
+            </button>
+            <Divider />
+            <History events={events} />
+          </>
+        )}
+
+        {tab === "insights" && (
+          <>
+            <Timeline events={events} />
+            <WeightChart events={events} />
+            <Trends events={events} />
+          </>
+        )}
+
+        {tab === "library" && <Library events={events} />}
+
+        <div className="flex flex-col items-center gap-2 pt-4">
+          {loading && <p className="text-[10px] text-muted">Syncing…</p>}
+        </div>
+      </div>
+
+      {backdateOpen && (
+        <BackdateSheet
+          sleeping={sleeping}
+          suggestedBreastSide={suggestedBreastSide}
+          onClose={() => setBackdateOpen(false)}
+        />
+      )}
+    </main>
   );
 }
 
@@ -189,7 +196,7 @@ function Divider() {
   );
 }
 
-function BottomNav({
+function TopTabs({
   tab,
   onChange,
 }: {
@@ -197,31 +204,22 @@ function BottomNav({
   onChange: (t: Tab) => void;
 }) {
   return (
-    <nav
-      aria-label="Primary"
-      className="fixed bottom-0 left-0 right-0 z-30 border-t border-accent-soft bg-surface"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-    >
-      <div className="mx-auto max-w-md grid grid-cols-3">
-        <TabButton
-          active={tab === "home"}
-          onClick={() => onChange("home")}
-          label="Home"
-          icon={<HomeIcon />}
-        />
-        <TabButton
-          active={tab === "insights"}
-          onClick={() => onChange("insights")}
-          label="Insights"
-          icon={<ChartIcon />}
-        />
-        <TabButton
-          active={tab === "library"}
-          onClick={() => onChange("library")}
-          label="Library"
-          icon={<BookIcon />}
-        />
-      </div>
+    <nav aria-label="Primary" className="flex items-center gap-1">
+      <TabButton active={tab === "home"} onClick={() => onChange("home")}>
+        Home
+      </TabButton>
+      <TabButton
+        active={tab === "insights"}
+        onClick={() => onChange("insights")}
+      >
+        Insights
+      </TabButton>
+      <TabButton
+        active={tab === "library"}
+        onClick={() => onChange("library")}
+      >
+        Library
+      </TabButton>
     </nav>
   );
 }
@@ -229,13 +227,11 @@ function BottomNav({
 function TabButton({
   active,
   onClick,
-  label,
-  icon,
+  children,
 }: {
   active: boolean;
   onClick: () => void;
-  label: string;
-  icon: React.ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <button
@@ -247,17 +243,18 @@ function TabButton({
         touchAction: "manipulation",
       }}
       className={
-        "flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-semibold transition-colors " +
-        (active ? "text-accent" : "text-muted hover:text-foreground")
+        "px-4 py-1.5 text-sm font-bold rounded-full transition-all duration-150 active:scale-[0.97] " +
+        (active
+          ? "bg-accent text-white shadow-sm"
+          : "text-muted hover:text-foreground hover:bg-accent-soft/40")
       }
     >
-      {icon}
-      <span>{label}</span>
+      {children}
     </button>
   );
 }
 
-function HomeIcon() {
+function BedIcon() {
   return (
     <svg
       width="22"
@@ -270,67 +267,10 @@ function HomeIcon() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M3 11.5 12 4l9 7.5" />
-      <path d="M5 10.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9.5" />
-    </svg>
-  );
-}
-
-function ChartIcon() {
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 20V6" />
-      <path d="M4 20h16" />
-      <rect x="7" y="12" width="3" height="6" rx="0.5" />
-      <rect x="12" y="8" width="3" height="10" rx="0.5" />
-      <rect x="17" y="14" width="3" height="4" rx="0.5" />
-    </svg>
-  );
-}
-
-function BookIcon() {
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
-      <path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg
-      width="22"
-      height="22"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      <path d="M3 18V7" />
+      <path d="M3 12h16a2 2 0 0 1 2 2v4" />
+      <path d="M3 18h18" />
+      <circle cx="8" cy="10" r="1.5" />
     </svg>
   );
 }

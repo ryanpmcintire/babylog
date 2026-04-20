@@ -9,7 +9,10 @@ import {
   currentSleepState,
   estimateNextEvent,
 } from "@/lib/aggregates";
-import { maxFeedIntervalHours } from "@/lib/norms";
+import {
+  maxFeedIntervalHours,
+  minSensibleFeedIntervalHours,
+} from "@/lib/norms";
 import { FunAge } from "./FunAge";
 
 type Derived = {
@@ -151,7 +154,30 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
 export function Dashboard({ events }: { events: BabyEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
   const derived = deriveState(events, new Date(now));
-  const nextFeed = estimateNextEvent(events, ["breast_feed", "bottle_feed"]);
+  // Merge feed events within 15 min — L+R breast sessions or quick top-ups are
+  // a single feeding, not two separate data points.
+  const rawNextFeed = estimateNextEvent(
+    events,
+    ["breast_feed", "bottle_feed"],
+    8,
+    15 * 60 * 1000,
+  );
+  const feedAgeDays = Math.max(
+    0,
+    Math.floor((now - LILY_BIRTHDATE.getTime()) / 86400000),
+  );
+  const feedFloorMs =
+    minSensibleFeedIntervalHours(feedAgeDays) * 3600000;
+  // Clamp the median to the age-appropriate floor so noisy data can't produce
+  // nonsensically close-together predictions.
+  const nextFeed =
+    rawNextFeed && rawNextFeed.medianIntervalMs < feedFloorMs
+      ? {
+          ...rawNextFeed,
+          medianIntervalMs: feedFloorMs,
+          nextAt: new Date(rawNextFeed.lastAt.getTime() + feedFloorMs),
+        }
+      : rawNextFeed;
   // Merge wet+dirty events within 15 minutes — they're typically the same change.
   const nextDiaper = estimateNextEvent(
     events,

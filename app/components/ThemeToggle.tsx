@@ -56,12 +56,10 @@ export function ThemeToggle() {
       aria-label={`Theme: ${label}. Tap to change.`}
       title={`Theme: ${label}`}
       style={{
-        top: "max(1rem, env(safe-area-inset-top))",
-        right: "max(1rem, env(safe-area-inset-right))",
         touchAction: "manipulation",
         WebkitTapHighlightColor: "transparent",
       }}
-      className="fixed z-50 flex h-11 w-11 items-center justify-center rounded-full border border-accent-soft bg-surface text-foreground/80 shadow-sm transition hover:text-foreground active:scale-95 cursor-pointer"
+      className="p-2 text-muted hover:text-foreground transition-colors"
     >
       {mounted && theme === "light" && <SunIcon />}
       {mounted && theme === "dark" && <MoonIcon />}
@@ -74,8 +72,8 @@ function SunIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
-      width="20"
-      height="20"
+      width="22"
+      height="22"
       fill="none"
       stroke="currentColor"
       strokeWidth="2"
@@ -93,8 +91,8 @@ function MoonIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
-      width="20"
-      height="20"
+      width="22"
+      height="22"
       fill="none"
       stroke="currentColor"
       strokeWidth="2"
@@ -111,8 +109,8 @@ function AutoIcon() {
   return (
     <svg
       viewBox="0 0 24 24"
-      width="20"
-      height="20"
+      width="22"
+      height="22"
       fill="none"
       stroke="currentColor"
       strokeWidth="2"

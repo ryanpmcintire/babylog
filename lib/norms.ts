@@ -114,3 +114,12 @@ export function maxFeedIntervalHours(ageDays: number): number {
   const range = feedsPerDayRange(ageDays);
   return Math.ceil(24 / range.min + 0.5);
 }
+
+// Minimum sensible interval between feeds, in hours. Used as a floor when the
+// computed median is suspiciously small (e.g. duplicate/clustered sessions).
+export function minSensibleFeedIntervalHours(ageDays: number): number {
+  const bucket = ageDays < 29 ? "newborn" : ageDays < 91 ? "1to3mo" : "older";
+  if (bucket === "newborn") return 1.25;
+  if (bucket === "1to3mo") return 1.5;
+  return 2;
+}

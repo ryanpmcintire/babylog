@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Nunito } from "next/font/google";
 import "./globals.css";
-import { ThemeToggle } from "./components/ThemeToggle";
 import { ServiceWorkerRegistrar } from "./components/ServiceWorkerRegistrar";
 import { AuthProvider } from "./providers";
 import { AuthGate } from "./auth-gate";
@@ -50,7 +49,6 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <ServiceWorkerRegistrar />
         <AuthProvider>
-          <ThemeToggle />
           <AuthGate>{children}</AuthGate>
         </AuthProvider>
       </body>
