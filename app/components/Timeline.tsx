@@ -66,7 +66,9 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
 
   const { sleepByDay, markersByDay } = useMemo(() => {
     const sleeps = buildSleepSegments(events, now, { inferBufferMin: 10 });
-    const markers = buildMarkers(events);
+    // Pumps are parent events, not baby events — omit from the timeline to
+    // reduce marker density. They're still visible in Trends / History.
+    const markers = buildMarkers(events).filter((m) => m.kind !== "pump");
     const sMap = new Map<string, SleepSegment[]>();
     const mMap = new Map<string, Marker[]>();
     for (const s of sleeps) {
@@ -207,7 +209,6 @@ function Legend() {
       </span>
       <LegendDot color={MARKER_COLORS.feed} label="feed" />
       <LegendDot color={MARKER_COLORS.diaper} label="diaper" />
-      <LegendDot color={MARKER_COLORS.pump} label="pump" />
     </div>
   );
 }

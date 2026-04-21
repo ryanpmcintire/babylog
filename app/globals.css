@@ -83,3 +83,40 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
+
+/* Subtle rhythms tied to the FunAge mode. Newborn heart rate ~135 bpm →
+   ~0.88s per lub-dub cycle. Newborn breath rate ~42/min → ~1.4s per cycle. */
+@keyframes babylog-heartbeat {
+  0% { transform: scale(1); }
+  10% { transform: scale(1.045); }
+  22% { transform: scale(1); }
+  32% { transform: scale(1.025); }
+  44% { transform: scale(1); }
+  100% { transform: scale(1); }
+}
+
+@keyframes babylog-breath {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.035); }
+}
+
+.rhythm-heartbeat {
+  animation: babylog-heartbeat 0.88s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.rhythm-breath {
+  animation: babylog-breath 1.4s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rhythm-heartbeat,
+  .rhythm-breath {
+    animation: none;
+  }
+}

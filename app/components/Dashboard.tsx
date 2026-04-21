@@ -13,6 +13,7 @@ import {
   maxFeedIntervalHours,
   minSensibleFeedIntervalHours,
 } from "@/lib/norms";
+import { rhythmClassFor, useFunAgeMode } from "@/lib/rhythm";
 import { FunAge } from "./FunAge";
 
 type Derived = {
@@ -153,6 +154,8 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
 
 export function Dashboard({ events }: { events: BabyEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
+  const funAgeMode = useFunAgeMode();
+  const rhythmClass = rhythmClassFor(funAgeMode);
   const derived = deriveState(events, new Date(now));
   // Merge feed events within 15 min — L+R breast sessions or quick top-ups are
   // a single feeding, not two separate data points.
@@ -218,7 +221,10 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
         <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted">
           Babylog
         </p>
-        <h1 className="text-3xl font-extrabold tracking-tight text-accent">
+        <h1
+          className={`text-3xl font-extrabold tracking-tight text-accent ${rhythmClass}`}
+          style={{ transformOrigin: "center" }}
+        >
           Lily
         </h1>
         <p className="text-xs font-semibold text-foreground tabular-nums">
@@ -228,7 +234,9 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
       </div>
 
       {todayBucket && (todayBucket.feeds > 0 || todayBucket.diapers > 0 || todayBucket.sleepMinutes > 0) && (
-        <div className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-2 flex items-baseline justify-center gap-3 text-xs text-foreground tabular-nums flex-wrap">
+        <div
+          className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-2 flex items-baseline justify-center gap-3 text-xs text-foreground tabular-nums flex-wrap"
+        >
           <span className="text-[10px] uppercase tracking-wider text-muted">Today</span>
           <span>
             <span className="font-bold">{todayBucket.feeds}</span>

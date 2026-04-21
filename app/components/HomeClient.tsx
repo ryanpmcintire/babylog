@@ -6,6 +6,7 @@ import { useRecentEvents } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
 import type { Side } from "@/lib/events";
 import { Dashboard, isCurrentlySleeping } from "./Dashboard";
+import { TodayClock } from "./TodayClock";
 import { ActionGrid } from "./ActionGrid";
 import { SleepControl } from "./SleepControl";
 import { BackdateSheet } from "./BackdateSheet";
@@ -108,23 +109,23 @@ export function HomeClient() {
         className="w-full max-w-md sticky top-0 z-20 bg-background"
         style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top))" }}
       >
-        <div className="flex items-center justify-between gap-2 py-1">
+        <div className="flex items-center justify-between gap-1 sm:gap-2 py-1 min-w-0">
           <TopTabs tab={tab} onChange={changeTab} />
-          <div className="flex items-center gap-0.5 shrink-0">
+          <div className="flex items-center shrink-0">
             <ThemeToggle />
             <button
               type="button"
               onClick={() => setTonightMode(true)}
               aria-label="Tonight mode"
               title="Tonight mode"
-              className="p-2 text-muted hover:text-foreground transition-colors"
+              className="p-1.5 sm:p-2 text-muted hover:text-foreground transition-colors"
             >
               <BedIcon />
             </button>
             <Link
               href="/settings"
               aria-label="Settings"
-              className="p-2 text-muted hover:text-foreground transition-colors"
+              className="p-1.5 sm:p-2 text-muted hover:text-foreground transition-colors"
             >
               <GearIcon />
             </Link>
@@ -141,6 +142,7 @@ export function HomeClient() {
         {tab === "home" && (
           <>
             <Dashboard events={events} />
+            <TodayClock events={events} />
             <Divider />
             <ActionGrid
               sleeping={sleeping}
@@ -204,7 +206,7 @@ function TopTabs({
   onChange: (t: Tab) => void;
 }) {
   return (
-    <nav aria-label="Primary" className="flex items-center gap-1">
+    <nav aria-label="Primary" className="flex items-center gap-0.5 sm:gap-1 min-w-0">
       <TabButton active={tab === "home"} onClick={() => onChange("home")}>
         Home
       </TabButton>
@@ -243,7 +245,7 @@ function TabButton({
         touchAction: "manipulation",
       }}
       className={
-        "px-4 py-1.5 text-sm font-bold rounded-full transition-all duration-150 active:scale-[0.97] " +
+        "px-2.5 sm:px-4 py-1 sm:py-1.5 text-xs sm:text-sm font-bold rounded-full transition-all duration-150 active:scale-[0.97] whitespace-nowrap " +
         (active
           ? "bg-accent text-white shadow-sm"
           : "text-muted hover:text-foreground hover:bg-accent-soft/40")

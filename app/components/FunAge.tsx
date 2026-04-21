@@ -2,20 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { LILY_BIRTHDATE, ageInMs } from "@/lib/age";
+import {
+  readFunAgeMode,
+  setFunAgeMode,
+  type FunAgeMode,
+} from "@/lib/rhythm";
 
 const NEWBORN_BPS = 135 / 60;
 const NEWBORN_BREATHS_PER_SEC = 42 / 60;
 const LUNAR_CYCLE_DAYS = 29.530588;
 
-type Mode =
-  | "tally"
-  | "minutes"
-  | "heartbeats"
-  | "breaths"
-  | "moons"
-  | "firstYear";
-
-const MODE_ORDER: Mode[] = [
+const MODE_ORDER: FunAgeMode[] = [
   "tally",
   "minutes",
   "heartbeats",
@@ -29,6 +26,11 @@ export function FunAge() {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
+    const stored = readFunAgeMode();
+    if (stored) {
+      const idx = MODE_ORDER.indexOf(stored);
+      if (idx >= 0) setModeIdx(idx);
+    }
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
@@ -43,7 +45,9 @@ export function FunAge() {
   const mode = MODE_ORDER[modeIdx % MODE_ORDER.length]!;
 
   function cycle() {
-    setModeIdx((i) => (i + 1) % MODE_ORDER.length);
+    const next = (modeIdx + 1) % MODE_ORDER.length;
+    setModeIdx(next);
+    setFunAgeMode(MODE_ORDER[next]!);
   }
 
   return (

@@ -125,10 +125,10 @@ function timeLabel(d: Date): string {
 function breaksSleepChain(e: BabyEvent): boolean {
   // Any logged event that implies the baby was awake — if it falls between a
   // sleep_start and sleep_end, the original start is considered orphaned.
+  // Pump is intentionally excluded: mom can pump while the baby is asleep.
   return (
     e.type === "breast_feed" ||
     e.type === "bottle_feed" ||
-    e.type === "pump" ||
     e.type === "diaper_wet" ||
     e.type === "diaper_dirty" ||
     e.type === "sleep_end"
