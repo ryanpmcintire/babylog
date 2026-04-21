@@ -165,7 +165,7 @@ export function HomeClient() {
         {tab === "insights" && (
           <>
             <Timeline events={events} />
-            <WeightChart events={events} />
+            <WeightChart />
             <Trends events={events} />
           </>
         )}

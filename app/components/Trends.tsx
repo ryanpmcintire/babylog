@@ -5,11 +5,13 @@ import type { BabyEvent } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
 import { LILY_BIRTHDATE } from "@/lib/age";
 import { dailySleepNorm } from "@/lib/norms";
+import { useExtendedEvents } from "@/lib/useEvents";
 
 const RANGE_OPTIONS = [3, 7, 14, 30];
 
-export function Trends({ events }: { events: BabyEvent[] }) {
+export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
+  const { events, loadingMore } = useExtendedEvents(liveEvents, days);
 
   const buckets = useMemo(
     () => buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 }),
@@ -33,9 +35,14 @@ export function Trends({ events }: { events: BabyEvent[] }) {
   return (
     <div className="w-full flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
-          Daily totals
-        </h2>
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-xs uppercase tracking-[0.2em] text-muted">
+            Daily totals
+          </h2>
+          {loadingMore && (
+            <span className="text-[9px] text-muted italic">loading older…</span>
+          )}
+        </div>
         <div className="flex gap-1">
           {RANGE_OPTIONS.map((r) => (
             <button

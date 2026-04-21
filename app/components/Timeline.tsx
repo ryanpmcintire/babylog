@@ -9,6 +9,7 @@ import {
   type Marker,
   type SleepSegment,
 } from "@/lib/aggregates";
+import { useExtendedEvents } from "@/lib/useEvents";
 import { EditEventSheet } from "./EditEventSheet";
 
 const AXIS_TICKS = [0, 6, 12, 18, 24];
@@ -35,10 +36,11 @@ function shortDayLabel(d: Date, today: Date): string {
   return d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
-export function Timeline({ events }: { events: BabyEvent[] }) {
+export function Timeline({ events: liveEvents }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
   const [tick, setTick] = useState(() => Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const { events, loadingMore } = useExtendedEvents(liveEvents, days);
   const editingEvent = editingId
     ? events.find((e) => e.id === editingId) ?? null
     : null;
@@ -111,7 +113,12 @@ export function Timeline({ events }: { events: BabyEvent[] }) {
           ))}
         </div>
       </div>
-      <Legend />
+      <div className="flex items-center justify-between gap-2">
+        <Legend />
+        {loadingMore && (
+          <span className="text-[9px] text-muted italic">loading older…</span>
+        )}
+      </div>
       <div className="flex flex-col gap-0 mt-2">
         <AxisRow />
         {dayList.map((d, idx) => (

@@ -1,12 +1,11 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import type { BabyEvent } from "@/lib/events";
 import { formatWeightGrams } from "@/lib/events";
 import { LILY_BIRTHDATE } from "@/lib/age";
 import { weightPercentileGrams } from "@/lib/norms";
 import { useBoolPref } from "@/lib/prefs";
-import { writeEvent } from "@/lib/useEvents";
+import { useAllWeights, writeEvent } from "@/lib/useEvents";
 
 const DAYS_PROJECTION = 14;
 const REGRESSION_MIN_DAY = 7;
@@ -27,14 +26,15 @@ function shortWeight(g: number): string {
   return `${lbOut} lb ${oz16} oz`;
 }
 
-export function WeightChart({ events }: { events: BabyEvent[] }) {
+export function WeightChart() {
   const [hovered, setHovered] = useState<WeightPoint | null>(null);
   const [showCurves] = useBoolPref("showGrowthCurves");
   const [logOpen, setLogOpen] = useState(false);
+  const weightEvents = useAllWeights();
 
   const points = useMemo<WeightPoint[]>(() => {
     const weights: WeightPoint[] = [];
-    for (const e of events) {
+    for (const e of weightEvents) {
       if (e.type !== "weight") continue;
       const d = e.occurred_at.toDate();
       const dayOfLife =
@@ -42,7 +42,7 @@ export function WeightChart({ events }: { events: BabyEvent[] }) {
       weights.push({ date: d, grams: e.weight_grams, dayOfLife });
     }
     return weights.sort((a, b) => a.dayOfLife - b.dayOfLife);
-  }, [events]);
+  }, [weightEvents]);
 
   const latest = points.length > 0 ? points[points.length - 1]! : null;
 
