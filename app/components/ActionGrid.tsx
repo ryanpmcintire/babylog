@@ -3,18 +3,55 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BREAST_OUTCOMES,
+  COMMON_MEDS,
+  FEVER_THRESHOLD_F,
+  HIGH_FEVER_THRESHOLD_F,
   MILK_TYPES,
   SIDES,
+  TEMP_METHODS,
   VOLUME_PRESETS_ML,
+  lookupCommonMed,
   type BabyEvent,
   type BreastFeedOutcome,
+  type CommonMed,
   type MilkType,
   type Side,
+  type TempMethod,
 } from "@/lib/events";
-import { formatVolume, mlToOz } from "@/lib/format";
+import { formatRelativeShort, formatVolume, mlToOz } from "@/lib/format";
 import { softDeleteEvent, writeEvent, type NewEventPayload } from "@/lib/useEvents";
+import { useBaby } from "@/lib/useBaby";
 
-type PanelKind = "breast" | "bottle" | "pump" | null;
+type PanelKind = "breast" | "bottle" | "pump" | "med" | "temp" | null;
+
+function lastMedicationPayload(
+  events: BabyEvent[] | undefined,
+): NewEventPayload | null {
+  if (!events) return null;
+  for (const e of events) {
+    if (e.type === "medication") {
+      const payload: NewEventPayload = { type: "medication", name: e.name };
+      if (e.dose) payload.dose = e.dose;
+      if (e.notes) payload.notes = e.notes;
+      return payload;
+    }
+  }
+  return null;
+}
+
+function uniqueMedNames(events: BabyEvent[] | undefined): string[] {
+  if (!events) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of events) {
+    if (e.type === "medication" && !seen.has(e.name)) {
+      seen.add(e.name);
+      out.push(e.name);
+      if (out.length >= 8) break;
+    }
+  }
+  return out;
+}
 
 const SESSION_GAP_MS = 5000;
 
@@ -85,6 +122,11 @@ export function ActionGrid({
   suggestedBreastSide?: Side;
   events?: BabyEvent[];
 }) {
+  const baby = useBaby();
+  const ageDays = Math.max(
+    0,
+    Math.floor((Date.now() - baby.birthdate.getTime()) / 86400000),
+  );
   const [panel, setPanel] = useState<PanelKind>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -320,6 +362,34 @@ export function ActionGrid({
         Pump
       </ActionButton>
 
+      <div className="grid grid-cols-2 gap-3">
+        <SecondaryButton
+          onClick={() => setPanel("med")}
+          onLongPress={async () => {
+            const last = lastMedicationPayload(events);
+            if (!last) {
+              setFlash("Nothing recent to repeat");
+              setTimeout(() => setFlash(null), 2000);
+              return;
+            }
+            await log(
+              last,
+              `Medication (repeated): ${last.type === "medication" ? last.name : ""}`,
+            );
+          }}
+          icon={<PillIcon />}
+          hint="hold to repeat"
+        >
+          Medication
+        </SecondaryButton>
+        <SecondaryButton
+          onClick={() => setPanel("temp")}
+          icon={<ThermometerIcon />}
+        >
+          Temperature
+        </SecondaryButton>
+      </div>
+
       {backdate && (
         <div className="grid grid-cols-2 gap-3">
           <ActionButton
@@ -359,7 +429,87 @@ export function ActionGrid({
       {panel === "pump" && (
         <PumpPanel onClose={() => setPanel(null)} onLog={log} />
       )}
+      {panel === "med" && (
+        <MedicationPanel
+          recentNames={uniqueMedNames(events)}
+          ageDays={ageDays}
+          onClose={() => setPanel(null)}
+          onLog={(p, c) => log(p, c)}
+        />
+      )}
+      {panel === "temp" && (
+        <TemperaturePanel
+          events={events}
+          onClose={() => setPanel(null)}
+          onLog={(p, c) => log(p, c)}
+        />
+      )}
     </div>
+  );
+}
+
+function SecondaryButton({
+  onClick,
+  onLongPress,
+  children,
+  icon,
+  hint,
+}: {
+  onClick: () => void;
+  onLongPress?: () => void;
+  children: ReactNode;
+  icon?: ReactNode;
+  hint?: string;
+}) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triggeredRef = useRef(false);
+
+  function startHold() {
+    if (!onLongPress) return;
+    triggeredRef.current = false;
+    timerRef.current = setTimeout(() => {
+      triggeredRef.current = true;
+      onLongPress();
+    }, 550);
+  }
+  function cancelHold() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (triggeredRef.current) {
+          triggeredRef.current = false;
+          return;
+        }
+        onClick();
+      }}
+      onPointerDown={startHold}
+      onPointerUp={cancelHold}
+      onPointerCancel={cancelHold}
+      onPointerLeave={cancelHold}
+      onContextMenu={(e) => {
+        if (onLongPress) e.preventDefault();
+      }}
+      style={{
+        touchAction: "manipulation",
+        WebkitTapHighlightColor: "transparent",
+      }}
+      className="min-h-[64px] rounded-2xl px-3 py-2 text-sm font-medium shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] flex flex-col items-center justify-center gap-0.5 bg-surface border border-accent-soft text-foreground hover:border-accent/60"
+    >
+      {icon}
+      <span>{children}</span>
+      {hint && (
+        <span className="text-[10px] text-muted/80 font-medium leading-none mt-0.5">
+          {hint}
+        </span>
+      )}
+    </button>
   );
 }
 
@@ -427,7 +577,9 @@ function ActionButton({
       {icon}
       <span>{children}</span>
       {hint && (
-        <span className="text-[9px] text-muted font-normal">{hint}</span>
+        <span className="text-[10px] text-muted/80 font-medium leading-none mt-0.5">
+          {hint}
+        </span>
       )}
     </button>
   );
@@ -495,6 +647,44 @@ function SwirlIcon() {
       aria-hidden="true"
     >
       <path d="M12 3a4 4 0 0 0-3.5 5.95A4 4 0 0 0 6 16.5a4 4 0 0 0 4 4h4a4 4 0 0 0 4-4 4 4 0 0 0-2.5-7.55A4 4 0 0 0 12 3z" />
+    </svg>
+  );
+}
+
+function PillIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2.5" y="9" width="19" height="6" rx="3" transform="rotate(-30 12 12)" />
+      <line x1="8.7" y1="7.5" x2="15.3" y2="16.5" />
+    </svg>
+  );
+}
+
+function ThermometerIcon() {
+  return (
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14 4a2 2 0 0 0-4 0v10.5a4 4 0 1 0 4 0z" />
+      <line x1="12" y1="8" x2="12" y2="14" />
     </svg>
   );
 }
@@ -976,5 +1166,326 @@ function PumpSide({
         className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
       />
     </div>
+  );
+}
+
+function MedicationPanel({
+  recentNames,
+  ageDays,
+  onClose,
+  onLog,
+}: {
+  recentNames: string[];
+  ageDays: number;
+  onClose: () => void;
+  onLog: (p: NewEventPayload, c: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [dose, setDose] = useState("");
+  const [notes, setNotes] = useState("");
+
+  function selectCommon(m: CommonMed) {
+    setName(m.name);
+    if (m.defaultDose && !dose) setDose(m.defaultDose);
+  }
+
+  function selectRecent(n: string) {
+    setName(n);
+    const common = lookupCommonMed(n);
+    if (common?.defaultDose && !dose) setDose(common.defaultDose);
+  }
+
+  // Recent names that aren't already in the COMMON_MEDS quick-pick list, so
+  // we don't show them twice.
+  const commonNamesLower = new Set(
+    COMMON_MEDS.map((m) => m.name.toLowerCase()),
+  );
+  const extraRecents = recentNames.filter(
+    (n) => !commonNamesLower.has(n.toLowerCase()),
+  );
+
+  function confirm() {
+    const trimmedName = name.trim();
+    if (!trimmedName) return;
+    const payload: NewEventPayload = {
+      type: "medication",
+      name: trimmedName,
+    };
+    const trimmedDose = dose.trim();
+    if (trimmedDose) payload.dose = trimmedDose;
+    const trimmedNotes = notes.trim();
+    if (trimmedNotes) payload.notes = trimmedNotes;
+    const summary = trimmedDose
+      ? `${trimmedName} · ${trimmedDose}`
+      : trimmedName;
+    onLog(payload, `Medication: ${summary}`);
+  }
+
+  return (
+    <Sheet title="Medication" onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-muted mb-2">
+            Common
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {COMMON_MEDS.map((m) => {
+              const active = name === m.name;
+              const tooYoung =
+                m.minAgeDays != null && ageDays < m.minAgeDays;
+              return (
+                <button
+                  key={m.name}
+                  type="button"
+                  onClick={() => selectCommon(m)}
+                  title={
+                    tooYoung
+                      ? `Typically given after ${Math.round((m.minAgeDays ?? 0) / 30)} months`
+                      : undefined
+                  }
+                  className={
+                    "rounded-full px-3 py-1.5 text-sm border transition-all duration-150 active:scale-[0.97] " +
+                    (active
+                      ? "bg-accent text-white border-accent"
+                      : tooYoung
+                        ? "bg-surface text-muted border-accent-soft/50 opacity-60"
+                        : "bg-surface text-foreground border-accent-soft hover:border-accent/50")
+                  }
+                >
+                  {m.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {extraRecents.length > 0 && (
+          <div>
+            <p className="text-xs uppercase tracking-wider text-muted mb-2">
+              Recent
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {extraRecents.map((n) => {
+                const active = name === n;
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => selectRecent(n)}
+                    className={
+                      "rounded-full px-3 py-1.5 text-sm border transition-all duration-150 active:scale-[0.97] " +
+                      (active
+                        ? "bg-accent text-white border-accent"
+                        : "bg-surface text-foreground border-accent-soft hover:border-accent/50")
+                    }
+                  >
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="text-xs uppercase tracking-wider text-muted mb-2 block">
+            Name
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Vitamin D, Tylenol, Gas drops…"
+            className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs uppercase tracking-wider text-muted mb-2 block">
+            Dose <span className="lowercase opacity-70">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={dose}
+            onChange={(e) => setDose(e.target.value)}
+            placeholder="1 mL, 1 dropper, 80 mg…"
+            className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs uppercase tracking-wider text-muted mb-2 block">
+            Notes <span className="lowercase opacity-70">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder=""
+            className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={confirm}
+          disabled={!name.trim()}
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm transition-all duration-150 hover:shadow-md hover:brightness-105 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {!name.trim() ? "Enter a medication name" : "Log medication"}
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+function TemperaturePanel({
+  events,
+  onClose,
+  onLog,
+}: {
+  events?: BabyEvent[];
+  onClose: () => void;
+  onLog: (p: NewEventPayload, c: string) => Promise<void>;
+}) {
+  const [tempStr, setTempStr] = useState("");
+  const [method, setMethod] = useState<TempMethod | null>(null);
+  const [notes, setNotes] = useState("");
+
+  // Most recent prior temperature reading, for context.
+  const prior = (() => {
+    if (!events) return null;
+    for (const e of events) {
+      if (e.type === "temperature") return e;
+    }
+    return null;
+  })();
+
+  const tempF =
+    tempStr && Number(tempStr) > 0 && Number(tempStr) < 115
+      ? Number(tempStr)
+      : null;
+  const isFever = tempF != null && tempF >= FEVER_THRESHOLD_F;
+  const isHighFever = tempF != null && tempF >= HIGH_FEVER_THRESHOLD_F;
+  const delta =
+    tempF != null && prior ? tempF - prior.temp_f : null;
+
+  function confirm() {
+    if (tempF == null) return;
+    const payload: NewEventPayload = { type: "temperature", temp_f: tempF };
+    if (method) payload.method = method;
+    const trimmedNotes = notes.trim();
+    if (trimmedNotes) payload.notes = trimmedNotes;
+    onLog(payload, `Temp logged: ${tempF.toFixed(1)}°F`);
+  }
+
+  return (
+    <Sheet title="Temperature" onClose={onClose}>
+      <div className="flex flex-col gap-4">
+        {prior && (
+          <div className="rounded-2xl bg-background border border-accent-soft px-4 py-2 text-xs text-muted flex items-baseline justify-between gap-2">
+            <span>
+              Last reading{" "}
+              <span className="text-foreground font-semibold tabular-nums">
+                {prior.temp_f.toFixed(1)}°F
+              </span>
+              {prior.method && (
+                <span className="text-muted"> · {prior.method}</span>
+              )}
+            </span>
+            <span className="tabular-nums">
+              {formatRelativeShort(prior.occurred_at.toDate())}
+            </span>
+          </div>
+        )}
+        <div>
+          <label className="text-xs uppercase tracking-wider text-muted mb-2 block">
+            Temperature (°F)
+          </label>
+          <input
+            type="number"
+            inputMode="decimal"
+            step="0.1"
+            min={90}
+            max={115}
+            placeholder="98.6"
+            value={tempStr}
+            onChange={(e) => setTempStr(e.target.value)}
+            className={
+              "w-full rounded-2xl border bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 " +
+              (isHighFever
+                ? "border-rose-500 focus:ring-rose-500"
+                : isFever
+                  ? "border-amber-500 focus:ring-amber-500"
+                  : "border-accent-soft focus:ring-accent")
+            }
+          />
+          {delta != null && (
+            <p className="mt-1 text-xs text-muted tabular-nums">
+              {delta > 0 ? "↑" : delta < 0 ? "↓" : "="}
+              {" "}
+              {Math.abs(delta).toFixed(1)}°F vs. last reading
+            </p>
+          )}
+          {isHighFever && (
+            <p className="mt-2 text-xs text-rose-600 font-medium">
+              High fever — call the pediatrician.
+            </p>
+          )}
+          {isFever && !isHighFever && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400 font-medium">
+              Fever (≥ 100.4°F).
+            </p>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs uppercase tracking-wider text-muted mb-2">
+            Method <span className="lowercase opacity-70">(optional)</span>
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {TEMP_METHODS.map((m) => {
+              const active = method === m.value;
+              return (
+                <button
+                  key={m.value}
+                  type="button"
+                  onClick={() => setMethod(active ? null : m.value)}
+                  className={
+                    "min-h-[48px] rounded-xl text-sm font-semibold border transition-all duration-150 active:scale-[0.97] " +
+                    (active
+                      ? "bg-accent text-white border-accent"
+                      : "bg-surface text-foreground border-accent-soft hover:border-accent/50")
+                  }
+                >
+                  {m.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs uppercase tracking-wider text-muted mb-2 block">
+            Notes <span className="lowercase opacity-70">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={confirm}
+          disabled={tempF == null}
+          className="mt-2 w-full rounded-2xl bg-accent px-4 py-4 text-base font-bold text-white shadow-sm transition-all duration-150 hover:shadow-md hover:brightness-105 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {tempF == null ? "Enter a temperature" : `Log ${tempF.toFixed(1)}°F`}
+        </button>
+      </div>
+    </Sheet>
   );
 }

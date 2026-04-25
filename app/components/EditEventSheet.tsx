@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import type { BabyEvent, BreastFeedOutcome, FoodReaction, MilkType, Side } from "@/lib/events";
+import type { BabyEvent, BreastFeedOutcome, FoodReaction, MilkType, Side, TempMethod } from "@/lib/events";
 import {
   BREAST_OUTCOMES,
   MILK_TYPES,
   SIDES,
+  TEMP_METHODS,
 } from "@/lib/events";
 import { updateEvent, type NewEventPayload } from "@/lib/useEvents";
 
@@ -79,6 +80,26 @@ export function EditEventSheet({
   );
   const [foodFirstTry, setFoodFirstTry] = useState(
     event.type === "food_tried" ? !!event.first_try : false,
+  );
+
+  const [medName, setMedName] = useState(
+    event.type === "medication" ? event.name : "",
+  );
+  const [medDose, setMedDose] = useState(
+    event.type === "medication" ? (event.dose ?? "") : "",
+  );
+  const [medNotes, setMedNotes] = useState(
+    event.type === "medication" ? (event.notes ?? "") : "",
+  );
+
+  const [tempStr, setTempStr] = useState(
+    event.type === "temperature" ? String(event.temp_f) : "",
+  );
+  const [tempMethod, setTempMethod] = useState<TempMethod | null>(
+    event.type === "temperature" ? (event.method ?? null) : null,
+  );
+  const [tempNotes, setTempNotes] = useState(
+    event.type === "temperature" ? (event.notes ?? "") : "",
   );
 
   async function save() {
@@ -161,6 +182,30 @@ export function EditEventSheet({
             ...(foodFirstTry ? { first_try: true } : {}),
           };
           break;
+        case "medication":
+          if (!medName.trim()) throw new Error("Name required");
+          patch = {
+            ...patch,
+            type: "medication",
+            name: medName.trim(),
+            ...(medDose.trim() ? { dose: medDose.trim() } : {}),
+            ...(medNotes.trim() ? { notes: medNotes.trim() } : {}),
+          };
+          break;
+        case "temperature": {
+          const t = Number(tempStr);
+          if (!Number.isFinite(t) || t <= 0 || t >= 115) {
+            throw new Error("Enter a temperature");
+          }
+          patch = {
+            ...patch,
+            type: "temperature",
+            temp_f: t,
+            ...(tempMethod ? { method: tempMethod } : {}),
+            ...(tempNotes.trim() ? { notes: tempNotes.trim() } : {}),
+          };
+          break;
+        }
       }
 
       await updateEvent(event.id, patch);
@@ -352,6 +397,68 @@ export function EditEventSheet({
               />
               First time trying this
             </label>
+          </>
+        )}
+
+        {event.type === "medication" && (
+          <>
+            <Field label="Name">
+              <input
+                type="text"
+                value={medName}
+                onChange={(e) => setMedName(e.target.value)}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </Field>
+            <Field label="Dose">
+              <input
+                type="text"
+                value={medDose}
+                onChange={(e) => setMedDose(e.target.value)}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </Field>
+            <Field label="Notes">
+              <input
+                type="text"
+                value={medNotes}
+                onChange={(e) => setMedNotes(e.target.value)}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </Field>
+          </>
+        )}
+
+        {event.type === "temperature" && (
+          <>
+            <Field label="Temperature (°F)">
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                value={tempStr}
+                onChange={(e) => setTempStr(e.target.value)}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </Field>
+            <Field label="Method">
+              <Segmented
+                options={TEMP_METHODS.map((m) => ({
+                  value: m.value,
+                  label: m.label,
+                }))}
+                value={tempMethod}
+                onChange={setTempMethod}
+              />
+            </Field>
+            <Field label="Notes">
+              <input
+                type="text"
+                value={tempNotes}
+                onChange={(e) => setTempNotes(e.target.value)}
+                className="w-full rounded-xl border border-accent-soft bg-background px-3 py-2 text-sm text-foreground"
+              />
+            </Field>
           </>
         )}
 

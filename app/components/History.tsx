@@ -95,6 +95,19 @@ function describe(event: BabyEvent): { label: string; detail?: string } {
         detail: `${event.food_name}${reaction}${firstTry}`,
       };
     }
+    case "medication": {
+      const detail = event.dose ? `${event.name} · ${event.dose}` : event.name;
+      return { label: "Medication", detail };
+    }
+    case "temperature": {
+      const method = event.method
+        ? ` · ${event.method}`
+        : "";
+      return {
+        label: "Temperature",
+        detail: `${event.temp_f.toFixed(1)}°F${method}`,
+      };
+    }
   }
 }
 

@@ -26,3 +26,18 @@ export function mlToOz(ml: number): number {
 export function formatVolume(ml: number): string {
   return `${ml} ml (${mlToOz(ml)} oz)`;
 }
+
+// Compact "how long ago" with day-aware fallback. Used wherever a chip
+// shouldn't grow past a few characters.
+export function formatRelativeShort(d: Date, now: Date = new Date()): string {
+  const ms = now.getTime() - d.getTime();
+  if (ms < 0) return "now";
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}

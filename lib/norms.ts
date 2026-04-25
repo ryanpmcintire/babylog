@@ -123,3 +123,18 @@ export function minSensibleFeedIntervalHours(ageDays: number): number {
   if (bucket === "1to3mo") return 1.5;
   return 2;
 }
+
+// Suggested awake window between sleeps, in minutes. Wider buckets than the
+// other norms because wake-window guidance varies a lot by source — these are
+// midpoints of the ranges Huckleberry/Taking Cara Babies publish.
+export function wakeWindowMinutes(ageDays: number): Range {
+  if (ageDays < 14) return { min: 30, max: 60 };
+  if (ageDays < 30) return { min: 45, max: 75 };
+  if (ageDays < 60) return { min: 60, max: 90 };
+  if (ageDays < 90) return { min: 75, max: 105 };
+  if (ageDays < 120) return { min: 90, max: 120 };
+  if (ageDays < 180) return { min: 105, max: 150 };
+  if (ageDays < 270) return { min: 150, max: 210 };
+  if (ageDays < 365) return { min: 180, max: 240 };
+  return { min: 240, max: 300 };
+}

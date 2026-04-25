@@ -3,8 +3,19 @@
 import { useEffect, useState } from "react";
 import { formatBabyAge } from "@/lib/age";
 import { useBaby } from "@/lib/useBaby";
-import { formatElapsed, formatLiveElapsed, formatVolume } from "@/lib/format";
-import type { BabyEvent } from "@/lib/events";
+import {
+  formatElapsed,
+  formatLiveElapsed,
+  formatRelativeShort,
+  formatVolume,
+} from "@/lib/format";
+import {
+  canonicalMedName,
+  lookupCommonMed,
+  FEVER_THRESHOLD_F,
+  HIGH_FEVER_THRESHOLD_F,
+  type BabyEvent,
+} from "@/lib/events";
 import {
   buildDailyBuckets,
   currentSleepState,
@@ -13,6 +24,7 @@ import {
 import {
   maxFeedIntervalHours,
   minSensibleFeedIntervalHours,
+  wakeWindowMinutes,
 } from "@/lib/norms";
 import { rhythmClassFor, useFunAgeMode } from "@/lib/rhythm";
 import { FunAge } from "./FunAge";
@@ -22,6 +34,7 @@ type Derived = {
   lastBreast: { summary: string; at: Date } | null;
   lastPump: { summary: string; at: Date } | null;
   lastDiaper: { summary: string; at: Date } | null;
+  lastMedication: { summary: string; at: Date } | null;
   sleepingSince: Date | null;
   lastWokeAt: Date | null;
 };
@@ -104,6 +117,7 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
   let lastBreast: Derived["lastBreast"] = null;
   let lastPump: Derived["lastPump"] = null;
   let lastDiaper: Derived["lastDiaper"] = null;
+  let lastMedication: Derived["lastMedication"] = null;
 
   const feedSession = lastSession(events, ["breast_feed", "bottle_feed"]);
   if (feedSession.length > 0) {
@@ -143,11 +157,22 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
     }
   }
 
+  for (const e of events) {
+    if (e.type === "medication") {
+      lastMedication = {
+        summary: e.dose ? `${e.name} · ${e.dose}` : e.name,
+        at: e.occurred_at.toDate(),
+      };
+      break;
+    }
+  }
+
   return {
     lastFeed,
     lastBreast,
     lastPump,
     lastDiaper,
+    lastMedication,
     sleepingSince,
     lastWokeAt,
   };
@@ -257,6 +282,16 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
         </div>
       )}
 
+      <FeverCard events={events} ageDays={feedAgeDays} now={now} />
+      <MedAdherenceCard events={events} now={new Date(now)} />
+
+      <SleepStatusChip
+        sleepingSince={derived.sleepingSince}
+        lastWokeAt={derived.lastWokeAt}
+        ageDays={feedAgeDays}
+        now={now}
+      />
+
       <div className="w-full grid grid-cols-1 gap-2 rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
         <Row
           label="Last feed"
@@ -294,14 +329,6 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           }
           detail={derived.lastDiaper?.summary}
         />
-        {derived.sleepingSince && (
-          <Row
-            label="Sleeping"
-            value={formatLiveElapsed(now - derived.sleepingSince.getTime())}
-            detail="since"
-            highlight
-          />
-        )}
       </div>
 
       {(nextFeed || nextDiaper) && (
@@ -347,6 +374,69 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
   );
 }
 
+function SleepStatusChip({
+  sleepingSince,
+  lastWokeAt,
+  ageDays,
+  now,
+}: {
+  sleepingSince: Date | null;
+  lastWokeAt: Date | null;
+  ageDays: number;
+  now: number;
+}) {
+  if (sleepingSince) {
+    const ms = now - sleepingSince.getTime();
+    return (
+      <div className="w-full rounded-2xl border border-accent/40 bg-accent/10 px-4 py-2.5 flex items-baseline justify-between gap-3">
+        <span className="text-xs uppercase tracking-wider text-muted">
+          Sleeping
+        </span>
+        <span className="text-base font-semibold text-accent tabular-nums">
+          {formatLiveElapsed(ms)}
+        </span>
+      </div>
+    );
+  }
+  if (!lastWokeAt) return null;
+  const awakeMs = now - lastWokeAt.getTime();
+  const win = wakeWindowMinutes(ageDays);
+  const overMs = awakeMs - win.max * 60_000;
+  const tone =
+    overMs >= 30 * 60_000 ? "rose" : overMs >= 0 ? "amber" : "neutral";
+  const containerClass =
+    tone === "rose"
+      ? "border-rose-300 bg-rose-50/70 dark:border-rose-900/60 dark:bg-rose-950/20"
+      : tone === "amber"
+        ? "border-amber-300 bg-amber-50/70 dark:border-amber-900/60 dark:bg-amber-950/20"
+        : "border-accent-soft bg-surface";
+  const valueClass =
+    tone === "rose"
+      ? "text-rose-700 dark:text-rose-300"
+      : tone === "amber"
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-foreground";
+  const note =
+    tone === "rose"
+      ? "overtired — try a nap"
+      : tone === "amber"
+        ? "past wake window"
+        : `target ${win.min}–${win.max}m`;
+  return (
+    <div className={"w-full rounded-2xl border px-4 py-2.5 flex items-baseline justify-between gap-3 " + containerClass}>
+      <span className="text-xs uppercase tracking-wider text-muted">
+        Awake
+      </span>
+      <div className="flex flex-col items-end">
+        <span className={"text-base font-semibold tabular-nums " + valueClass}>
+          {formatLiveElapsed(awakeMs)}
+        </span>
+        <span className="text-[10px] text-muted">{note}</span>
+      </div>
+    </div>
+  );
+}
+
 function Row({
   label,
   value,
@@ -380,4 +470,287 @@ function Row({
 
 export function isCurrentlySleeping(events: BabyEvent[]): boolean {
   return currentSleepState(events, 10).sleeping;
+}
+
+// ---------- Medication adherence -----------------------------------------
+
+type MedItem = {
+  displayName: string;
+  cadence: "daily" | "prn";
+  last: Extract<BabyEvent, { type: "medication" }>;
+  givenToday: boolean;
+};
+
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function deriveMedItems(events: BabyEvent[], now: Date): MedItem[] {
+  const sevenAgoMs = now.getTime() - 7 * 86400_000;
+  const todayKey = dayKey(now);
+  const byKey = new Map<
+    string,
+    {
+      displayName: string;
+      events: Extract<BabyEvent, { type: "medication" }>[];
+    }
+  >();
+  for (const e of events) {
+    if (e.type !== "medication") continue;
+    if (e.occurred_at.toMillis() < sevenAgoMs) break; // newest-first
+    const key = (canonicalMedName(e.name) ?? e.name.trim()).toLowerCase();
+    const display = canonicalMedName(e.name) ?? e.name.trim();
+    const entry = byKey.get(key) ?? { displayName: display, events: [] };
+    entry.events.push(e);
+    byKey.set(key, entry);
+  }
+  const items: MedItem[] = [];
+  for (const { displayName, events: list } of byKey.values()) {
+    const common = lookupCommonMed(displayName);
+    const cadence: "daily" | "prn" = common?.cadence ?? "prn";
+    const last = list[0]!;
+    const givenToday = list.some(
+      (e) => dayKey(e.occurred_at.toDate()) === todayKey,
+    );
+    items.push({ displayName, cadence, last, givenToday });
+  }
+  // Action-required first: daily not-yet-given today.
+  // Then daily given today, then PRN by recency.
+  items.sort((a, b) => {
+    const rank = (x: MedItem) =>
+      x.cadence === "daily" && !x.givenToday
+        ? 0
+        : x.cadence === "daily"
+          ? 1
+          : 2;
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return b.last.occurred_at.toMillis() - a.last.occurred_at.toMillis();
+  });
+  return items;
+}
+
+function MedAdherenceCard({
+  events,
+  now,
+}: {
+  events: BabyEvent[];
+  now: Date;
+}) {
+  const items = deriveMedItems(events, now);
+  if (items.length === 0) return null;
+  return (
+    <div className="w-full rounded-2xl border border-accent-soft bg-surface px-4 py-3 flex flex-col gap-1.5">
+      <p className="text-[10px] uppercase tracking-wider text-muted">
+        Today&apos;s meds
+      </p>
+      {items.map((item) => (
+        <MedRow key={item.displayName} item={item} now={now} />
+      ))}
+    </div>
+  );
+}
+
+function MedRow({ item, now }: { item: MedItem; now: Date }) {
+  const lastDate = item.last.occurred_at.toDate();
+  const todayKey = dayKey(now);
+  let value: string;
+  let valueClass: string;
+  if (item.cadence === "daily") {
+    if (item.givenToday) {
+      value = `✓ ${lastDate.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+      valueClass = "text-emerald-600 dark:text-emerald-400";
+    } else {
+      value = "—";
+      valueClass = "text-amber-600";
+    }
+  } else {
+    // PRN: show relative time, but flag if same-day repeat is recent
+    if (dayKey(lastDate) === todayKey) {
+      value = formatRelativeShort(lastDate, now);
+      valueClass = "text-foreground";
+    } else {
+      value = formatRelativeShort(lastDate, now);
+      valueClass = "text-muted";
+    }
+  }
+  const dose = item.last.dose ? ` · ${item.last.dose}` : "";
+  return (
+    <div className="flex items-baseline justify-between gap-2 text-sm">
+      <span className="text-foreground truncate">
+        {item.displayName}
+        <span className="text-muted text-xs">{dose}</span>
+      </span>
+      <span className={"tabular-nums font-medium " + valueClass}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ---------- Active fever card --------------------------------------------
+
+const FEVER_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+function recentTemps(
+  events: BabyEvent[],
+  now: number,
+): Extract<BabyEvent, { type: "temperature" }>[] {
+  const cutoff = now - FEVER_LOOKBACK_MS;
+  const list: Extract<BabyEvent, { type: "temperature" }>[] = [];
+  for (const e of events) {
+    if (e.type !== "temperature") continue;
+    if (e.occurred_at.toMillis() < cutoff) break;
+    list.push(e);
+  }
+  return list;
+}
+
+// AAP fever-when-to-call rules, simplified. Returns the most relevant
+// guidance line for the (age, current temp) pair.
+function feverCallGuidance(
+  ageDays: number,
+  tempF: number,
+): string | null {
+  if (ageDays < 90) {
+    if (tempF >= 100.4) return "Under 3 months: any fever ≥100.4°F — call now.";
+    return null;
+  }
+  if (ageDays < 180) {
+    if (tempF >= 102) return "3–6 months & ≥102°F — call the pediatrician.";
+    if (tempF >= 100.4) return "Fever — call if it persists past 24h.";
+    return null;
+  }
+  if (ageDays < 730) {
+    if (tempF >= 104) return "≥104°F — call now.";
+    if (tempF >= 102) return "Fever ≥102°F — call if it persists past 24h.";
+    if (tempF >= 100.4) return "Fever — call if it persists past 72h.";
+    return null;
+  }
+  if (tempF >= 104) return "≥104°F — call now.";
+  if (tempF >= 102) return "Fever ≥102°F — call if it persists past 72h.";
+  return null;
+}
+
+function FeverCard({
+  events,
+  ageDays,
+  now,
+}: {
+  events: BabyEvent[];
+  ageDays: number;
+  now: number;
+}) {
+  const recents = recentTemps(events, now);
+  const latest = recents[0];
+  if (!latest || latest.temp_f < FEVER_THRESHOLD_F) return null;
+
+  // Build a chronological (oldest-first) list of up to 8 readings.
+  const series = recents.slice(0, 8).reverse();
+  const tone =
+    latest.temp_f >= HIGH_FEVER_THRESHOLD_F ? "rose" : "amber";
+  const trend = (() => {
+    if (series.length < 2) return null;
+    const first = series[0]!.temp_f;
+    const last = series[series.length - 1]!.temp_f;
+    const diff = last - first;
+    if (Math.abs(diff) < 0.3) return "holding";
+    return diff > 0 ? "rising" : "easing";
+  })();
+  const guidance = feverCallGuidance(ageDays, latest.temp_f);
+
+  const containerClass =
+    tone === "rose"
+      ? "border-rose-300 bg-rose-50 dark:border-rose-900/60 dark:bg-rose-950/30"
+      : "border-amber-300 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30";
+  const valueClass =
+    tone === "rose"
+      ? "text-rose-700 dark:text-rose-300"
+      : "text-amber-700 dark:text-amber-300";
+
+  return (
+    <div className={"w-full rounded-2xl border px-4 py-3 flex flex-col gap-2 " + containerClass}>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-wider text-muted">
+          Fever tracking
+        </p>
+        <span className="text-[10px] text-muted">
+          {formatRelativeShort(latest.occurred_at.toDate(), new Date(now))}
+        </span>
+      </div>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className={"text-2xl font-bold tabular-nums " + valueClass}>
+          {latest.temp_f.toFixed(1)}°F
+        </span>
+        {trend && (
+          <span className="text-xs text-muted">
+            {trend === "rising"
+              ? "↑ rising"
+              : trend === "easing"
+                ? "↓ easing"
+                : "→ holding"}
+          </span>
+        )}
+      </div>
+      {series.length >= 2 && <FeverSparkline series={series} tone={tone} />}
+      {guidance && (
+        <p className={"text-xs font-medium " + valueClass}>{guidance}</p>
+      )}
+    </div>
+  );
+}
+
+function FeverSparkline({
+  series,
+  tone,
+}: {
+  series: Extract<BabyEvent, { type: "temperature" }>[];
+  tone: "amber" | "rose";
+}) {
+  const W = 240;
+  const H = 32;
+  const PAD = 2;
+  const temps = series.map((e) => e.temp_f);
+  const min = Math.min(98, ...temps);
+  const max = Math.max(...temps, 102);
+  const span = max - min || 1;
+  const xs = series.map((e) => e.occurred_at.toMillis());
+  const t0 = xs[0]!;
+  const tN = xs[xs.length - 1]!;
+  const tspan = tN - t0 || 1;
+  const points = series.map((e, i) => {
+    const x = PAD + ((e.occurred_at.toMillis() - t0) / tspan) * (W - 2 * PAD);
+    const y = H - PAD - ((e.temp_f - min) / span) * (H - 2 * PAD);
+    return { x, y, i };
+  });
+  const path = points
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+    .join(" ");
+  const stroke = tone === "rose" ? "rgb(225 29 72)" : "rgb(217 119 6)";
+  // 100.4 reference line
+  const yFever = H - PAD - ((100.4 - min) / span) * (H - 2 * PAD);
+  return (
+    <svg
+      width="100%"
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <line
+        x1={0}
+        x2={W}
+        y1={yFever}
+        y2={yFever}
+        stroke="currentColor"
+        strokeOpacity={0.2}
+        strokeDasharray="2 3"
+      />
+      <path d={path} fill="none" stroke={stroke} strokeWidth={1.5} />
+      {points.map((p) => (
+        <circle key={p.i} cx={p.x} cy={p.y} r={2} fill={stroke} />
+      ))}
+    </svg>
+  );
 }

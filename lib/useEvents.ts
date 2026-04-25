@@ -23,6 +23,7 @@ import type {
   FoodReaction,
   MilkType,
   Side,
+  TempMethod,
 } from "./events";
 
 // Resolve the household id for a write operation. Throws if the signed-in
@@ -54,9 +55,12 @@ function legacyEventsCollection() {
 
 export type EventsSource = "new" | "legacy" | null;
 
+// Default live window is 3 days. Older data is fetched on demand by Trends /
+// Timeline via fetchEventsInRange. Smaller default = fewer reads on every
+// fresh listener attach (PWA reload, tab change, etc).
 export function useRecentEvents(
-  days = 7,
-  maxCount = 500,
+  days = 3,
+  maxCount = 300,
 ): {
   events: BabyEvent[];
   loading: boolean;
@@ -72,6 +76,7 @@ export function useRecentEvents(
   useEffect(() => {
     if (!hid) return;
     let cancelled = false;
+    let triedLegacyFallback = false;
     const windowStart = Timestamp.fromMillis(
       Date.now() - days * 24 * 60 * 60 * 1000,
     );
@@ -94,10 +99,17 @@ export function useRecentEvents(
           }
         });
 
-        // Empty-on-first-sync fallback: if the new path has nothing, peek at
-        // the legacy top-level collection. Catches a missed/partial migration
-        // without silently showing an empty history.
-        if (list.length === 0 && source === null) {
+        // Legacy fallback: only fire when we have a SERVER-confirmed empty
+        // result (not a cache miss with no cached data) and we haven't
+        // tried it yet this mount. This was the runaway-reads source —
+        // cache-only empties were re-triggering legacy fetches every
+        // session, paying for ~320 docs each time.
+        if (
+          list.length === 0 &&
+          !triedLegacyFallback &&
+          !snap.metadata.fromCache
+        ) {
+          triedLegacyFallback = true;
           try {
             const legacyQ = query(
               legacyEventsCollection(),
@@ -121,8 +133,7 @@ export function useRecentEvents(
               return;
             }
           } catch {
-            // Legacy read may be denied by rules post-cleanup — fine, fall
-            // through to the empty new-path result.
+            /* legacy may be denied — fine */
           }
         }
 
@@ -141,8 +152,6 @@ export function useRecentEvents(
       cancelled = true;
       unsub();
     };
-    // source intentionally omitted — fallback is one-shot per mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hid, maxCount, days]);
 
   return { events, loading, error, source };
@@ -169,6 +178,18 @@ export type NewEventPayload =
       food_name: string;
       reaction?: FoodReaction;
       first_try?: boolean;
+      notes?: string;
+    }
+  | {
+      type: "medication";
+      name: string;
+      dose?: string;
+      notes?: string;
+    }
+  | {
+      type: "temperature";
+      temp_f: number;
+      method?: TempMethod;
       notes?: string;
     };
 
