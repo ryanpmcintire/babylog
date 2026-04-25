@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatBabyAge } from "@/lib/age";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import { formatElapsed, formatLiveElapsed, formatVolume } from "@/lib/format";
 import type { BabyEvent } from "@/lib/events";
 import {

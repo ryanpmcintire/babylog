@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { formatWeightGrams } from "@/lib/events";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import { weightPercentileGrams } from "@/lib/norms";
 import { useBoolPref } from "@/lib/prefs";
 import { useAllWeights, writeEvent } from "@/lib/useEvents";

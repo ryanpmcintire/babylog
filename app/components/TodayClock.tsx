@@ -7,7 +7,7 @@ import {
   inferredSleepWindows,
   estimateNextEvent,
 } from "@/lib/aggregates";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import { EditEventSheet } from "./EditEventSheet";
 
 const CX = 100;

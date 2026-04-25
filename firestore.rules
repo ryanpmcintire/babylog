@@ -3,29 +3,75 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function isHouseholdMember() {
+    // -- Helpers ----------------------------------------------------------
+
+    function isSignedIn() {
       return request.auth != null
-        && request.auth.token.email_verified == true
-        && request.auth.token.email.lower() in [
+        && request.auth.token.email_verified == true;
+    }
+
+    function userEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function isHouseholdMember(hid) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/households/$(hid))
+        && userEmail() in get(/databases/$(database)/documents/households/$(hid)).data.member_emails;
+    }
+
+    // Legacy global allowlist — used only for read access to the old
+    // top-level /events collection during the Phase B transition window.
+    // Remove after the legacy collection is deleted.
+    function isLegacyAllowlistMember() {
+      return isSignedIn()
+        && userEmail() in [
           'ryanpmcintire@gmail.com',
           'kellynmelanson@gmail.com'
         ];
     }
 
+    // -- Household-scoped data -------------------------------------------
+
+    match /households/{hid} {
+      // Members can read their household doc to display baby info.
+      allow read: if isHouseholdMember(hid);
+      // Household docs are seeded by the migration script (admin SDK).
+      // Block client writes; future invite flow will be a Cloud Function.
+      allow write: if false;
+
+      match /events/{eventId} {
+        allow read: if isHouseholdMember(hid);
+
+        allow create: if isHouseholdMember(hid)
+          && request.resource.data.created_by == request.auth.uid;
+
+        allow update, delete: if isHouseholdMember(hid)
+          && (request.time.toMillis() - resource.data.occurred_at.toMillis())
+             < 24 * 60 * 60 * 1000;
+      }
+
+      match /config/{docId} {
+        allow read, write: if isHouseholdMember(hid);
+      }
+    }
+
+    // -- Legacy top-level events (transition only) ------------------------
+
     match /events/{eventId} {
-      allow read: if isHouseholdMember();
-
-      allow create: if isHouseholdMember()
-        && request.resource.data.created_by == request.auth.uid;
-
-      allow update, delete: if isHouseholdMember()
-        && (request.time.toMillis() - resource.data.occurred_at.toMillis()) < 24 * 60 * 60 * 1000;
+      // Read-only fallback for the legacy banner. No writes allowed —
+      // all new writes go through the household subcollection.
+      allow read: if isLegacyAllowlistMember();
+      allow write: if false;
     }
 
+    // Legacy config (currently unused but kept reachable).
     match /config/{docId} {
-      allow read, write: if isHouseholdMember();
+      allow read: if isLegacyAllowlistMember();
+      allow write: if false;
     }
 
+    // Default deny.
     match /{document=**} {
       allow read, write: if false;
     }

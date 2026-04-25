@@ -15,6 +15,8 @@ import {
   where,
 } from "firebase/firestore";
 import { getDb, getFirebaseAuth } from "./firebase";
+import { getHouseholdIdForEmail } from "./household";
+import { useHouseholdId } from "./useHousehold";
 import type {
   BabyEvent,
   BreastFeedOutcome,
@@ -23,6 +25,35 @@ import type {
   Side,
 } from "./events";
 
+// Resolve the household id for a write operation. Throws if the signed-in
+// user has no mapping — should never happen in practice (allowlist gates
+// sign-in on the same set of emails).
+function requireHouseholdId(): string {
+  const auth = getFirebaseAuth();
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not signed in");
+  const hid = getHouseholdIdForEmail(user.email);
+  if (!hid) throw new Error("No household for current user");
+  return hid;
+}
+
+// Path: households/{hid}/events
+function eventsCollection(hid: string) {
+  return collection(getDb(), "households", hid, "events");
+}
+
+function eventDoc(hid: string, eventId: string) {
+  return doc(getDb(), "households", hid, "events", eventId);
+}
+
+// Old top-level events path. Read-only fallback during the Phase B transition
+// window. Remove once the legacy collection is deleted.
+function legacyEventsCollection() {
+  return collection(getDb(), "events");
+}
+
+export type EventsSource = "new" | "legacy" | null;
+
 export function useRecentEvents(
   days = 7,
   maxCount = 500,
@@ -30,18 +61,22 @@ export function useRecentEvents(
   events: BabyEvent[];
   loading: boolean;
   error: string | null;
+  source: EventsSource;
 } {
+  const hid = useHouseholdId();
   const [events, setEvents] = useState<BabyEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [source, setSource] = useState<EventsSource>(null);
 
   useEffect(() => {
-    const db = getDb();
+    if (!hid) return;
+    let cancelled = false;
     const windowStart = Timestamp.fromMillis(
       Date.now() - days * 24 * 60 * 60 * 1000,
     );
     const q = query(
-      collection(db, "events"),
+      eventsCollection(hid),
       where("occurred_at", ">=", windowStart),
       orderBy("occurred_at", "desc"),
       limit(maxCount),
@@ -49,7 +84,8 @@ export function useRecentEvents(
 
     const unsub = onSnapshot(
       q,
-      (snap) => {
+      async (snap) => {
+        if (cancelled) return;
         const list: BabyEvent[] = [];
         snap.forEach((d) => {
           const data = d.data() as Omit<BabyEvent, "id">;
@@ -57,19 +93,59 @@ export function useRecentEvents(
             list.push({ ...(data as BabyEvent), id: d.id });
           }
         });
+
+        // Empty-on-first-sync fallback: if the new path has nothing, peek at
+        // the legacy top-level collection. Catches a missed/partial migration
+        // without silently showing an empty history.
+        if (list.length === 0 && source === null) {
+          try {
+            const legacyQ = query(
+              legacyEventsCollection(),
+              where("occurred_at", ">=", windowStart),
+              orderBy("occurred_at", "desc"),
+              limit(maxCount),
+            );
+            const legacySnap = await getDocs(legacyQ);
+            if (cancelled) return;
+            if (!legacySnap.empty) {
+              const legacyList: BabyEvent[] = [];
+              legacySnap.forEach((d) => {
+                const data = d.data() as Omit<BabyEvent, "id">;
+                if (!data.deleted) {
+                  legacyList.push({ ...(data as BabyEvent), id: d.id });
+                }
+              });
+              setEvents(legacyList);
+              setSource("legacy");
+              setLoading(false);
+              return;
+            }
+          } catch {
+            // Legacy read may be denied by rules post-cleanup — fine, fall
+            // through to the empty new-path result.
+          }
+        }
+
         setEvents(list);
+        setSource("new");
         setLoading(false);
       },
       (err) => {
+        if (cancelled) return;
         setError(err.message);
         setLoading(false);
       },
     );
 
-    return unsub;
-  }, [maxCount, days]);
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+    // source intentionally omitted — fallback is one-shot per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hid, maxCount, days]);
 
-  return { events, loading, error };
+  return { events, loading, error, source };
 }
 
 export type NewEventPayload =
@@ -100,15 +176,13 @@ export async function writeEvent(
   payload: NewEventPayload,
   occurredAt?: Date,
 ): Promise<string> {
+  const hid = requireHouseholdId();
   const auth = getFirebaseAuth();
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not signed in");
-
-  const db = getDb();
+  const user = auth.currentUser!;
   const now = occurredAt ?? new Date();
   const nowTs = Timestamp.fromDate(now);
 
-  const ref = await addDoc(collection(db, "events"), {
+  const ref = await addDoc(eventsCollection(hid), {
     ...payload,
     occurred_at: nowTs,
     created_by: user.uid,
@@ -120,8 +194,8 @@ export async function writeEvent(
 }
 
 export async function softDeleteEvent(id: string): Promise<void> {
-  const db = getDb();
-  await updateDoc(doc(db, "events", id), {
+  const hid = requireHouseholdId();
+  await updateDoc(eventDoc(hid, id), {
     deleted: true,
     updated_at: Timestamp.now(),
   });
@@ -135,9 +209,9 @@ export async function fetchEventsInRange(
   endDate: Date,
   maxCount = 2000,
 ): Promise<BabyEvent[]> {
-  const db = getDb();
+  const hid = requireHouseholdId();
   const q = query(
-    collection(db, "events"),
+    eventsCollection(hid),
     where("occurred_at", ">=", Timestamp.fromDate(startDate)),
     where("occurred_at", "<", Timestamp.fromDate(endDate)),
     orderBy("occurred_at", "desc"),
@@ -203,12 +277,13 @@ export function useExtendedEvents(
 // shown on a chart that spans the baby's whole life, so they need their own
 // narrow query instead of riding the 7-day main feed.
 export function useAllWeights(): BabyEvent[] {
+  const hid = useHouseholdId();
   const [weights, setWeights] = useState<BabyEvent[]>([]);
 
   useEffect(() => {
-    const db = getDb();
+    if (!hid) return;
     const q = query(
-      collection(db, "events"),
+      eventsCollection(hid),
       where("type", "==", "weight"),
       orderBy("occurred_at", "desc"),
       limit(200),
@@ -222,15 +297,15 @@ export function useAllWeights(): BabyEvent[] {
       setWeights(list);
     });
     return unsub;
-  }, []);
+  }, [hid]);
 
   return weights;
 }
 
 export async function fetchAllEvents(): Promise<BabyEvent[]> {
-  const db = getDb();
+  const hid = requireHouseholdId();
   const q = query(
-    collection(db, "events"),
+    eventsCollection(hid),
     orderBy("occurred_at", "desc"),
   );
   const snap = await getDocs(q);
@@ -246,12 +321,12 @@ export async function updateEvent(
   id: string,
   patch: Partial<NewEventPayload> & { occurred_at?: Date },
 ): Promise<void> {
-  const db = getDb();
+  const hid = requireHouseholdId();
   const { occurred_at, ...rest } = patch;
   const update: Record<string, unknown> = {
     ...rest,
     updated_at: Timestamp.now(),
   };
   if (occurred_at) update.occurred_at = Timestamp.fromDate(occurred_at);
-  await updateDoc(doc(db, "events", id), update);
+  await updateDoc(eventDoc(hid, id), update);
 }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatBabyAge } from "@/lib/age";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import { ALLOWED_EMAILS } from "@/lib/allowlist";
 import { fetchAllEvents, writeEvent } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";

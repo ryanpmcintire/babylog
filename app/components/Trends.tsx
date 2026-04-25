@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import { dailySleepNorm } from "@/lib/norms";
 import { useExtendedEvents } from "@/lib/useEvents";
 

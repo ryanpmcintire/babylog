@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BabyEvent, FoodReaction } from "@/lib/events";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import { searchBooks, type BookSearchResult } from "@/lib/openlibrary";
 import { writeEvent, type NewEventPayload } from "@/lib/useEvents";
 

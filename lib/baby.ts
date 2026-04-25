@@ -1,7 +1,6 @@
-"use client";
-
-import { useMemo } from "react";
-import { useAuth } from "@/app/providers";
+// Pure baby/household config. No React, no client-only imports — safe to use
+// from Node scripts (migration, etc.) as well as from the app. The React
+// hook lives in useBaby.ts.
 
 export type BabyProfile = {
   id: string;
@@ -12,14 +11,13 @@ export type BabyProfile = {
 
 // --- Household config ---------------------------------------------------
 //
-// Phase A: Adding a new family is just adding a BabyProfile here and mapping
-// each member's email to its id. This is the single source of truth for
-// who is in the app; `allowlist.ts` derives from it, and every component
-// reads the active baby via `useBaby()` rather than hardcoded constants.
+// Adding a new family is just adding a BabyProfile here and mapping each
+// member's email to its id. Single source of truth for who is in the app;
+// `allowlist.ts` derives from it.
 //
-// Phase B (later): this entire table moves into Firestore as a `households`
-// collection and the resolve step becomes a doc read keyed on the signed-in
-// user's uid.
+// In Phase B, this still drives household IDs — `lib/household.ts` builds
+// `households/{baby.id}` Firestore docs from this table at migration time,
+// and the rules check membership via the doc's `member_emails` array.
 // -----------------------------------------------------------------------
 
 const BABIES: Record<string, BabyProfile> = {
@@ -47,14 +45,6 @@ export function getBabyForEmail(
   const babyId = EMAIL_TO_BABY[email.toLowerCase().trim()];
   if (!babyId) return DEFAULT_BABY;
   return BABIES[babyId] ?? DEFAULT_BABY;
-}
-
-export function useBaby(): BabyProfile {
-  const { user } = useAuth();
-  return useMemo(
-    () => getBabyForEmail(user?.email ?? null),
-    [user?.email],
-  );
 }
 
 export function getAllowedEmails(): readonly string[] {

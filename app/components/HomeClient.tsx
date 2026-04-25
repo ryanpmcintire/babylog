@@ -43,7 +43,7 @@ function readStoredTab(): Tab {
 }
 
 export function HomeClient() {
-  const { events, loading, error } = useRecentEvents();
+  const { events, loading, error, source } = useRecentEvents();
   const sleeping = isCurrentlySleeping(events);
   const [backdateOpen, setBackdateOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
@@ -137,6 +137,13 @@ export function HomeClient() {
       <div className="w-full max-w-md flex flex-col gap-6 pt-4">
         {error && (
           <p className="text-center text-xs text-rose-600">{error}</p>
+        )}
+
+        {source === "legacy" && (
+          <div className="rounded-2xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-2 text-xs text-amber-900 dark:text-amber-200">
+            ⚠️ Reading legacy data — household migration hasn&apos;t completed.
+            New events you log may not appear here.
+          </div>
         )}
 
         {tab === "home" && (

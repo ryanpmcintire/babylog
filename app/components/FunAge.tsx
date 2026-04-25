@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ageInMs } from "@/lib/age";
-import { useBaby } from "@/lib/baby";
+import { useBaby } from "@/lib/useBaby";
 import {
   readFunAgeMode,
   setFunAgeMode,
