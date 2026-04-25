@@ -40,7 +40,7 @@ function describe(event: BabyEvent): { label: string; detail?: string } {
             : "didn't latch";
       const side = sideLabel(event.side);
       return {
-        label: "Breast feed",
+        label: "Nursing",
         detail: side ? `${side} · ${outcomeText}` : outcomeText,
       };
     }

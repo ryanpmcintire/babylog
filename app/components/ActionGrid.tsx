@@ -279,11 +279,11 @@ export function ActionGrid({
       <div className="grid grid-cols-2 gap-3">
         <ActionButton
           onClick={() => setPanel("breast")}
-          onLongPress={() => repeatLast(["breast_feed"], "Breast")}
+          onLongPress={() => repeatLast(["breast_feed"], "Nursing")}
           icon={<HeartIcon />}
           hint="hold to repeat"
         >
-          Breast feed
+          Nursing
         </ActionButton>
         <ActionButton
           onClick={() => setPanel("bottle")}
@@ -593,13 +593,13 @@ function BreastPanel({
             : ""),
       )
       .join(" · ");
-    onLog(events, `Breast: ${summary}`);
+    onLog(events, `Nursing: ${summary}`);
   }
 
   const any = leftOutcome || rightOutcome;
 
   return (
-    <Sheet title="Breast feed" onClose={onClose}>
+    <Sheet title="Nursing" onClose={onClose}>
       <div className="flex flex-col gap-4">
         <p className="text-xs text-muted">
           Pick an outcome for each side you used. Skip a side by leaving it blank.

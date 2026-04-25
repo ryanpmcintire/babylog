@@ -1,5 +1,3 @@
-export const LILY_BIRTHDATE = new Date("2026-04-09T02:25:00-05:00");
-
 export function ageInMs(birthdate: Date, now: Date = new Date()): number {
   return Math.max(0, now.getTime() - birthdate.getTime());
 }

@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:emulator": "concurrently -n web,emu -c blue,magenta \"cross-env NEXT_PUBLIC_USE_FIREBASE_EMULATOR=true next dev\" \"firebase emulators:start --only auth,firestore\"",
+    "emulator": "firebase emulators:start --only auth,firestore",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -19,8 +21,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "firebase-tools": "^15.15.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

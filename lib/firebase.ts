@@ -1,19 +1,26 @@
 import { getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import {
   browserLocalPersistence,
+  connectAuthEmulator,
   getAuth,
   setPersistence,
   type Auth,
 } from "firebase/auth";
 import {
+  connectFirestoreEmulator,
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
   type Firestore,
 } from "firebase/firestore";
 
+const useEmulator =
+  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true";
+
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  apiKey: useEmulator
+    ? "demo-api-key"
+    : process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
@@ -34,6 +41,15 @@ function getApp(): FirebaseApp {
 export function getFirebaseAuth(): Auth {
   if (authInstance) return authInstance;
   authInstance = getAuth(getApp());
+  if (useEmulator && typeof window !== "undefined") {
+    try {
+      connectAuthEmulator(authInstance, "http://127.0.0.1:9099", {
+        disableWarnings: true,
+      });
+    } catch {
+      /* already connected */
+    }
+  }
   setPersistence(authInstance, browserLocalPersistence).catch(() => {
     // Persistence failure is non-fatal; session works for this tab.
   });
@@ -53,6 +69,13 @@ export function getDb(): Firestore {
     // fall back to default instance in that case.
     const { getFirestore } = require("firebase/firestore") as typeof import("firebase/firestore");
     dbInstance = getFirestore(getApp());
+  }
+  if (useEmulator && typeof window !== "undefined") {
+    try {
+      connectFirestoreEmulator(dbInstance, "127.0.0.1", 8080);
+    } catch {
+      /* already connected */
+    }
   }
   return dbInstance;
 }

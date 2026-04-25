@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BabyEvent, FoodReaction } from "@/lib/events";
-import { LILY_BIRTHDATE } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import { searchBooks, type BookSearchResult } from "@/lib/openlibrary";
 import { writeEvent, type NewEventPayload } from "@/lib/useEvents";
 
@@ -18,10 +18,11 @@ const FOOD_REACTIONS: { value: FoodReaction; label: string }[] = [
 export function Library({ events }: { events: BabyEvent[] }) {
   const [panel, setPanel] = useState<"book" | "food" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const baby = useBaby();
 
   const ageDays = Math.max(
     0,
-    Math.floor((Date.now() - LILY_BIRTHDATE.getTime()) / 86400000),
+    Math.floor((Date.now() - baby.birthdate.getTime()) / 86400000),
   );
   const foodsUnlocked = ageDays >= FOOD_UNLOCK_DAYS;
 

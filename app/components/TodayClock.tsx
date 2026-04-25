@@ -7,7 +7,7 @@ import {
   inferredSleepWindows,
   estimateNextEvent,
 } from "@/lib/aggregates";
-import { LILY_BIRTHDATE } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import { EditEventSheet } from "./EditEventSheet";
 
 const CX = 100;
@@ -65,6 +65,7 @@ function clampToToday(
 export function TodayClock({ events }: { events: BabyEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);
+  const baby = useBaby();
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60 * 1000);
@@ -147,7 +148,7 @@ export function TodayClock({ events }: { events: BabyEvent[] }) {
 
   const dayOfLife = Math.max(
     1,
-    Math.floor((now - LILY_BIRTHDATE.getTime()) / 86400000) + 1,
+    Math.floor((now - baby.birthdate.getTime()) / 86400000) + 1,
   );
 
   return (

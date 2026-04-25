@@ -1,7 +1,6 @@
-export const ALLOWED_EMAILS: readonly string[] = [
-  "ryanpmcintire@gmail.com",
-  "kellynmelanson@gmail.com",
-];
+import { getAllowedEmails } from "./baby";
+
+export const ALLOWED_EMAILS: readonly string[] = getAllowedEmails();
 
 export function isAllowed(email: string | null | undefined): boolean {
   if (!email) return false;

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
+import { formatBabyAge } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import { ALLOWED_EMAILS } from "@/lib/allowlist";
 import { fetchAllEvents, writeEvent } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
@@ -12,6 +13,7 @@ import type { BabyEvent } from "@/lib/events";
 
 export default function SettingsPage() {
   const { user, signOut } = useAuth();
+  const baby = useBaby();
   const [showGrowthCurves, setShowGrowthCurves] = useBoolPref(
     "showGrowthCurves",
   );
@@ -101,10 +103,10 @@ export default function SettingsPage() {
         </div>
 
         <Section title="Baby">
-          <Row label="Name" value="Lily Patricia McIntire" />
+          <Row label="Name" value={baby.fullName ?? baby.name} />
           <Row
             label="Born"
-            value={LILY_BIRTHDATE.toLocaleString(undefined, {
+            value={baby.birthdate.toLocaleString(undefined, {
               weekday: "long",
               year: "numeric",
               month: "long",
@@ -113,7 +115,7 @@ export default function SettingsPage() {
               minute: "2-digit",
             })}
           />
-          <Row label="Age" value={formatBabyAge(LILY_BIRTHDATE)} />
+          <Row label="Age" value={formatBabyAge(baby.birthdate)} />
         </Section>
 
         <Section title="Log weight">

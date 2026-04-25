@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LILY_BIRTHDATE, ageInMs } from "@/lib/age";
+import { ageInMs } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import {
   readFunAgeMode,
   setFunAgeMode,
@@ -24,6 +25,7 @@ const MODE_ORDER: FunAgeMode[] = [
 export function FunAge() {
   const [modeIdx, setModeIdx] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const baby = useBaby();
 
   useEffect(() => {
     const stored = readFunAgeMode();
@@ -35,7 +37,7 @@ export function FunAge() {
     return () => clearInterval(id);
   }, []);
 
-  const ms = ageInMs(LILY_BIRTHDATE, new Date(now));
+  const ms = ageInMs(baby.birthdate, new Date(now));
   const totalSeconds = Math.floor(ms / 1000);
   const totalMinutes = Math.floor(ms / 60000);
   const days = ms / 86400000;

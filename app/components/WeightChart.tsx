@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { formatWeightGrams } from "@/lib/events";
-import { LILY_BIRTHDATE } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import { weightPercentileGrams } from "@/lib/norms";
 import { useBoolPref } from "@/lib/prefs";
 import { useAllWeights, writeEvent } from "@/lib/useEvents";
@@ -31,6 +31,7 @@ export function WeightChart() {
   const [showCurves] = useBoolPref("showGrowthCurves");
   const [logOpen, setLogOpen] = useState(false);
   const weightEvents = useAllWeights();
+  const baby = useBaby();
 
   const points = useMemo<WeightPoint[]>(() => {
     const weights: WeightPoint[] = [];
@@ -38,11 +39,11 @@ export function WeightChart() {
       if (e.type !== "weight") continue;
       const d = e.occurred_at.toDate();
       const dayOfLife =
-        (d.getTime() - LILY_BIRTHDATE.getTime()) / (1000 * 60 * 60 * 24);
+        (d.getTime() - baby.birthdate.getTime()) / (1000 * 60 * 60 * 24);
       weights.push({ date: d, grams: e.weight_grams, dayOfLife });
     }
     return weights.sort((a, b) => a.dayOfLife - b.dayOfLife);
-  }, [weightEvents]);
+  }, [weightEvents, baby.birthdate]);
 
   const latest = points.length > 0 ? points[points.length - 1]! : null;
 

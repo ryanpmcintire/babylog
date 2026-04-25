@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
-import { LILY_BIRTHDATE } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import { dailySleepNorm } from "@/lib/norms";
 import { useExtendedEvents } from "@/lib/useEvents";
 
@@ -12,6 +12,7 @@ const RANGE_OPTIONS = [3, 7, 14, 30];
 export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
   const { events, loadingMore } = useExtendedEvents(liveEvents, days);
+  const baby = useBaby();
 
   const buckets = useMemo(
     () => buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 }),
@@ -28,7 +29,7 @@ export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
 
   const ageDays = Math.max(
     0,
-    Math.floor((Date.now() - LILY_BIRTHDATE.getTime()) / 86400000),
+    Math.floor((Date.now() - baby.birthdate.getTime()) / 86400000),
   );
   const sleepRef = dailySleepNorm(ageDays);
 

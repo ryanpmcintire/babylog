@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LILY_BIRTHDATE, formatBabyAge } from "@/lib/age";
+import { formatBabyAge } from "@/lib/age";
+import { useBaby } from "@/lib/baby";
 import { formatElapsed, formatLiveElapsed, formatVolume } from "@/lib/format";
 import type { BabyEvent } from "@/lib/events";
 import {
@@ -111,10 +112,10 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
     if (anchor.type === "bottle_feed") {
       lastFeed = { summary: `Bottle · ${formatVolume(anchor.volume_ml)}`, at };
     } else {
-      // Breast feed: group may contain L + R events.
+      // Nursing: group may contain L + R events.
       const breastOnly = feedSession.filter((e) => e.type === "breast_feed");
       lastFeed = {
-        summary: `Breast · ${summarizeBreastSession(breastOnly)}`,
+        summary: `Nursing · ${summarizeBreastSession(breastOnly)}`,
         at,
       };
     }
@@ -156,6 +157,7 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
   const [now, setNow] = useState(() => Date.now());
   const funAgeMode = useFunAgeMode();
   const rhythmClass = rhythmClassFor(funAgeMode);
+  const baby = useBaby();
   const derived = deriveState(events, new Date(now));
   // Merge feed events within 15 min — L+R breast sessions or quick top-ups are
   // a single feeding, not two separate data points.
@@ -167,7 +169,7 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
   );
   const feedAgeDays = Math.max(
     0,
-    Math.floor((now - LILY_BIRTHDATE.getTime()) / 86400000),
+    Math.floor((now - baby.birthdate.getTime()) / 86400000),
   );
   const feedFloorMs =
     minSensibleFeedIntervalHours(feedAgeDays) * 3600000;
@@ -194,7 +196,7 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
     return () => clearInterval(id);
   }, []);
 
-  const age = formatBabyAge(LILY_BIRTHDATE, new Date(now));
+  const age = formatBabyAge(baby.birthdate, new Date(now));
 
   const todayBucket = buildDailyBuckets(events, 1, new Date(now), {
     inferBufferMin: 10,
@@ -225,7 +227,7 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           className={`text-3xl font-extrabold tracking-tight text-accent ${rhythmClass}`}
           style={{ transformOrigin: "center" }}
         >
-          Lily
+          {baby.name}
         </h1>
         <p className="text-xs font-semibold text-foreground tabular-nums">
           {age}
@@ -266,7 +268,7 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           detail={derived.lastFeed?.summary}
         />
         <Row
-          label="Last breast"
+          label="Last nursing"
           value={
             derived.lastBreast
               ? `${formatElapsed(now - derived.lastBreast.at.getTime())}`
@@ -310,7 +312,7 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
           {nextFeed && (() => {
             const ageDays = Math.max(
               0,
-              Math.floor((now - LILY_BIRTHDATE.getTime()) / 86400000),
+              Math.floor((now - baby.birthdate.getTime()) / 86400000),
             );
             const maxHours = maxFeedIntervalHours(ageDays);
             const intervalHours = nextFeed.medianIntervalMs / 3600000;
