@@ -37,7 +37,17 @@ function shortDayLabel(d: Date, today: Date): string {
   return d.toLocaleDateString(undefined, { weekday: "short" });
 }
 
-export function Timeline({ events: liveEvents }: { events: BabyEvent[] }) {
+export function Timeline({
+  events: liveEvents,
+  insightsView,
+}: {
+  events: BabyEvent[];
+  insightsView?: import("@/lib/views").InsightsView | null;
+}) {
+  // insightsView wired for follow-up: timeline markers can switch to it
+  // (see InsightsView.markers) once the editing flow stops needing the
+  // full event list. For now the prop is accepted but unused.
+  void insightsView;
   const [days, setDays] = useState(7);
   const [tick, setTick] = useState(() => Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);

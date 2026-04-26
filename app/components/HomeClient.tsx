@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   useHomeView,
+  useInsightsView,
+  useLibraryView,
   useRecentEvents,
   VIEWS_FLAG_ENABLED,
 } from "@/lib/useEvents";
@@ -49,6 +51,8 @@ function readStoredTab(): Tab {
 export function HomeClient() {
   const { events, loading, error, source } = useRecentEvents();
   const { view: homeView } = useHomeView();
+  const { view: insightsView } = useInsightsView();
+  const { view: libraryView } = useLibraryView();
   // When the home view is wired up, prefer its sleep state — it's the
   // dual-write source of truth and it's already loaded as part of the
   // single home doc read.
@@ -195,13 +199,13 @@ export function HomeClient() {
 
         {tab === "insights" && (
           <>
-            <Timeline events={events} />
-            <WeightChart />
-            <Trends events={events} />
+            <Timeline events={events} insightsView={insightsView} />
+            <WeightChart insightsView={insightsView} />
+            <Trends events={events} insightsView={insightsView} />
           </>
         )}
 
-        {tab === "library" && <Library />}
+        {tab === "library" && <Library libraryView={libraryView} />}
 
         <div className="flex flex-col items-center gap-2 pt-4">
           {loading && <p className="text-[10px] text-muted">Syncing…</p>}

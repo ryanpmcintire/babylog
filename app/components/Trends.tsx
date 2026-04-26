@@ -10,8 +10,10 @@ import {
   useExtendedEvents,
   useDailySummariesRange,
   SUMMARIES_FLAG_ENABLED,
+  VIEWS_FLAG_ENABLED,
 } from "@/lib/useEvents";
 import { dayKeyOf, type DailySummary } from "@/lib/summaries";
+import type { InsightsView } from "@/lib/views";
 
 const RANGE_OPTIONS = [3, 7, 14, 30];
 
@@ -51,28 +53,51 @@ function summariesToBuckets(
   });
 }
 
-export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
+export function Trends({
+  events: liveEvents,
+  insightsView,
+}: {
+  events: BabyEvent[];
+  insightsView?: InsightsView | null;
+}) {
   const [days, setDays] = useState(7);
   const baby = useBaby();
 
-  // Summaries path: one query for the date range, billed at ~`days` reads
-  // total instead of one per raw event. Falls back to raw-event bucketing
-  // when the flag is off.
-  const { summaries } = useDailySummariesRange(days);
+  // Three read paths in priority order:
+  //   1. insightsView is loaded — ZERO additional reads, just slice.
+  //   2. summaries flag is on — ~days reads (one per day in the window).
+  //   3. fall through to raw-event bucketing (legacy path).
+  const { summaries } = useDailySummariesRange(
+    VIEWS_FLAG_ENABLED && insightsView ? 0 : days,
+  );
   const { events, loadingMore } = useExtendedEvents(
-    SUMMARIES_FLAG_ENABLED ? [] : liveEvents,
-    SUMMARIES_FLAG_ENABLED ? 0 : days,
+    SUMMARIES_FLAG_ENABLED || (VIEWS_FLAG_ENABLED && insightsView)
+      ? []
+      : liveEvents,
+    SUMMARIES_FLAG_ENABLED || (VIEWS_FLAG_ENABLED && insightsView) ? 0 : days,
   );
 
   const buckets = useMemo(() => {
+    if (VIEWS_FLAG_ENABLED && insightsView) {
+      // The view holds INSIGHTS_DAYS=30 days oldest-first; slice the last
+      // `days` entries.
+      const sliced = insightsView.daily_summaries.slice(-days);
+      return summariesToBuckets(sliced, new Date());
+    }
     if (SUMMARIES_FLAG_ENABLED) {
       return summariesToBuckets(summaries, new Date());
     }
     return buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 });
-  }, [summaries, events, days]);
+  }, [insightsView, summaries, events, days]);
 
-  if (!SUMMARIES_FLAG_ENABLED && events.length === 0) return null;
-  if (SUMMARIES_FLAG_ENABLED && summaries.length === 0) return null;
+  if (
+    VIEWS_FLAG_ENABLED &&
+    insightsView &&
+    insightsView.daily_summaries.length === 0
+  )
+    return null;
+  if (!SUMMARIES_FLAG_ENABLED && !insightsView && events.length === 0) return null;
+  if (SUMMARIES_FLAG_ENABLED && !insightsView && summaries.length === 0) return null;
 
   const milk = buckets.map((b) => b.milkMl);
   const sleepHrs = buckets.map((b) => b.sleepMinutes / 60);

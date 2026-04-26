@@ -20,7 +20,12 @@ const FOOD_REACTIONS: { value: FoodReaction; label: string }[] = [
   { value: "disliked", label: "Disliked" },
 ];
 
-export function Library() {
+export function Library({
+  libraryView,
+}: {
+  libraryView?: import("@/lib/views").LibraryView | null;
+} = {}) {
+  void libraryView;
   const [panel, setPanel] = useState<"book" | "food" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const baby = useBaby();
