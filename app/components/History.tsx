@@ -69,6 +69,8 @@ function describe(event: BabyEvent): { label: string; detail?: string } {
       return { label: "Wet diaper" };
     case "diaper_dirty":
       return { label: "Dirty diaper" };
+    case "diaper_mixed":
+      return { label: "Mixed diaper" };
     case "sleep_start":
       return { label: "Sleep started" };
     case "sleep_end":
@@ -144,6 +146,7 @@ function breaksSleepChain(e: BabyEvent): boolean {
     e.type === "bottle_feed" ||
     e.type === "diaper_wet" ||
     e.type === "diaper_dirty" ||
+    e.type === "diaper_mixed" ||
     e.type === "sleep_end"
   );
 }

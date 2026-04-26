@@ -21,6 +21,7 @@ import {
 import { formatRelativeShort, formatVolume, mlToOz } from "@/lib/format";
 import { softDeleteEvent, writeEvent, type NewEventPayload } from "@/lib/useEvents";
 import { useBaby } from "@/lib/useBaby";
+import { Sheet } from "./Sheet";
 
 type PanelKind = "breast" | "bottle" | "pump" | "med" | "temp" | null;
 
@@ -55,10 +56,10 @@ function uniqueMedNames(events: BabyEvent[] | undefined): string[] {
 
 const SESSION_GAP_MS = 5000;
 
-function lastSessionPayloads(
+function getLastSession(
   events: BabyEvent[] | undefined,
   types: BabyEvent["type"][],
-): NewEventPayload[] {
+): BabyEvent[] {
   if (!events || events.length === 0) return [];
   const session: BabyEvent[] = [];
   let anchorMs: number | null = null;
@@ -74,6 +75,54 @@ function lastSessionPayloads(
       break;
     }
   }
+  return session;
+}
+
+function previewSession(session: BabyEvent[]): string | null {
+  if (session.length === 0) return null;
+  const parts: string[] = [];
+  for (const e of session) {
+    if (e.type === "breast_feed") {
+      const side =
+        e.side === "left" ? "L" : e.side === "right" ? "R" : "L+R";
+      const outcome =
+        e.outcome === "latched_fed"
+          ? "fed"
+          : e.outcome === "latched_brief"
+            ? "brief"
+            : "no latch";
+      parts.push(`${side} ${outcome}`);
+    } else if (e.type === "bottle_feed") {
+      const milk = e.milk_types
+        .map((m) =>
+          m === "mom_pumped" ? "Mom" : m === "donor" ? "Donor" : "Formula",
+        )
+        .join("+");
+      parts.push(`${e.volume_ml}ml ${milk}`);
+    } else if (e.type === "pump") {
+      const side =
+        e.side === "left" ? "L" : e.side === "right" ? "R" : "";
+      parts.push(side ? `${side} ${e.volume_ml}ml` : `${e.volume_ml}ml`);
+    }
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function previewLastMedication(events: BabyEvent[] | undefined): string | null {
+  if (!events) return null;
+  for (const e of events) {
+    if (e.type === "medication") {
+      return e.dose ? `${e.name} · ${e.dose}` : e.name;
+    }
+  }
+  return null;
+}
+
+function lastSessionPayloads(
+  events: BabyEvent[] | undefined,
+  types: BabyEvent["type"][],
+): NewEventPayload[] {
+  const session = getLastSession(events, types);
   const payloads: NewEventPayload[] = [];
   for (const e of session) {
     if (e.type === "breast_feed") {
@@ -98,6 +147,8 @@ function lastSessionPayloads(
   }
   return payloads;
 }
+
+const LONG_PRESS_MS = 550;
 
 const TIMER_STORAGE_KEY = "babylog.feedTimerStart";
 
@@ -289,8 +340,24 @@ export function ActionGrid({
         <button
           type="button"
           onClick={startTimer}
-          className="self-center text-xs text-muted underline decoration-dotted underline-offset-4 hover:text-foreground"
+          className="self-center inline-flex items-center gap-2 rounded-full border border-accent-soft bg-surface px-4 py-1.5 text-xs font-semibold text-foreground hover:border-accent/60 hover:shadow-sm active:scale-[0.97] transition-all"
+          style={{ WebkitTapHighlightColor: "transparent" }}
         >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="13" r="8" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="13" x2="15" y2="15" />
+            <line x1="10" y1="2" x2="14" y2="2" />
+          </svg>
           Start feed timer
         </button>
       )}
@@ -318,12 +385,13 @@ export function ActionGrid({
           </button>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <ActionButton
           onClick={() => setPanel("breast")}
           onLongPress={() => repeatLast(["breast_feed"], "Nursing")}
           icon={<HeartIcon />}
           hint="hold to repeat"
+          previewLabel={previewSession(getLastSession(events, ["breast_feed"]))}
         >
           Nursing
         </ActionButton>
@@ -332,35 +400,44 @@ export function ActionGrid({
           onLongPress={() => repeatLast(["bottle_feed"], "Bottle")}
           icon={<BottleIcon />}
           hint="hold to repeat"
+          previewLabel={previewSession(getLastSession(events, ["bottle_feed"]))}
         >
-          Bottle feed
+          Bottle
         </ActionButton>
         <ActionButton
+          onClick={() => setPanel("pump")}
+          onLongPress={() => repeatLast(["pump"], "Pump")}
+          icon={<PumpIcon />}
+          hint="hold to repeat"
+          previewLabel={previewSession(getLastSession(events, ["pump"]))}
+        >
+          Pump
+        </ActionButton>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <DiaperButton
           onClick={() =>
             logDiaper({ type: "diaper_wet" }, "Wet diaper logged")
           }
           icon={<DropIcon />}
-        >
-          Wet diaper
-        </ActionButton>
-        <ActionButton
+          label="Wet"
+        />
+        <DiaperButton
+          onClick={() =>
+            logDiaper({ type: "diaper_mixed" }, "Mixed diaper logged")
+          }
+          icon={<MixedDiaperIcon />}
+          label="Mixed"
+        />
+        <DiaperButton
           onClick={() =>
             logDiaper({ type: "diaper_dirty" }, "Dirty diaper logged")
           }
           icon={<SwirlIcon />}
-        >
-          Dirty diaper
-        </ActionButton>
+          label="Dirty"
+        />
       </div>
-
-      <ActionButton
-        onClick={() => setPanel("pump")}
-        onLongPress={() => repeatLast(["pump"], "Pump")}
-        icon={<PumpIcon />}
-        hint="hold to repeat"
-      >
-        Pump
-      </ActionButton>
 
       <div className="grid grid-cols-2 gap-3">
         <SecondaryButton
@@ -379,6 +456,7 @@ export function ActionGrid({
           }}
           icon={<PillIcon />}
           hint="hold to repeat"
+          previewLabel={previewLastMedication(events)}
         >
           Medication
         </SecondaryButton>
@@ -448,45 +526,98 @@ export function ActionGrid({
   );
 }
 
-function SecondaryButton({
-  onClick,
-  onLongPress,
-  children,
-  icon,
-  hint,
-}: {
-  onClick: () => void;
-  onLongPress?: () => void;
-  children: ReactNode;
-  icon?: ReactNode;
-  hint?: string;
-}) {
+function useLongPress(onLongPress: (() => void) | undefined) {
+  const [holding, setHolding] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggeredRef = useRef(false);
 
   function startHold() {
     if (!onLongPress) return;
     triggeredRef.current = false;
+    setHolding(true);
     timerRef.current = setTimeout(() => {
       triggeredRef.current = true;
+      setHolding(false);
       onLongPress();
-    }, 550);
+    }, LONG_PRESS_MS);
   }
   function cancelHold() {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    setHolding(false);
   }
+  function consumedTrigger(): boolean {
+    if (triggeredRef.current) {
+      triggeredRef.current = false;
+      return true;
+    }
+    return false;
+  }
+
+  return { holding, startHold, cancelHold, consumedTrigger };
+}
+
+function HoldOverlay({ holding, label }: { holding: boolean; label?: string }) {
+  // Animated progress fill at the bottom of the button + a floating preview
+  // tooltip above. Both only render while actively holding.
+  return (
+    <>
+      {label && (
+        <div
+          className={
+            "absolute left-1/2 -top-2 -translate-x-1/2 -translate-y-full pointer-events-none transition-opacity duration-100 " +
+            (holding ? "opacity-100" : "opacity-0")
+          }
+          style={{ zIndex: 10 }}
+        >
+          <div className="rounded-lg bg-foreground text-background text-[11px] font-medium px-2.5 py-1 whitespace-nowrap shadow-lg">
+            Repeat: {label}
+          </div>
+          <div
+            className="w-2 h-2 bg-foreground absolute left-1/2 -bottom-1 -translate-x-1/2 rotate-45"
+            style={{ zIndex: -1 }}
+          />
+        </div>
+      )}
+      <div
+        className="absolute left-0 bottom-0 h-[3px] rounded-b-2xl bg-accent pointer-events-none"
+        style={{
+          width: holding ? "100%" : "0%",
+          transition: holding
+            ? `width ${LONG_PRESS_MS}ms linear`
+            : "width 120ms ease-out",
+          opacity: holding ? 1 : 0,
+        }}
+      />
+    </>
+  );
+}
+
+function SecondaryButton({
+  onClick,
+  onLongPress,
+  children,
+  icon,
+  hint,
+  previewLabel,
+}: {
+  onClick: () => void;
+  onLongPress?: () => void;
+  children: ReactNode;
+  icon?: ReactNode;
+  hint?: string;
+  previewLabel?: string | null;
+}) {
+  const { holding, startHold, cancelHold, consumedTrigger } =
+    useLongPress(onLongPress);
 
   return (
     <button
       type="button"
       onClick={() => {
-        if (triggeredRef.current) {
-          triggeredRef.current = false;
-          return;
-        }
+        if (consumedTrigger()) return;
         onClick();
       }}
       onPointerDown={startHold}
@@ -500,7 +631,7 @@ function SecondaryButton({
         touchAction: "manipulation",
         WebkitTapHighlightColor: "transparent",
       }}
-      className="min-h-[64px] rounded-2xl px-3 py-2 text-sm font-medium shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] flex flex-col items-center justify-center gap-0.5 bg-surface border border-accent-soft text-foreground hover:border-accent/60"
+      className="relative min-h-[64px] rounded-2xl px-3 py-2 text-sm font-medium shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] flex flex-col items-center justify-center gap-0.5 bg-surface border border-accent-soft text-foreground hover:border-accent/60 overflow-hidden"
     >
       {icon}
       <span>{children}</span>
@@ -509,6 +640,7 @@ function SecondaryButton({
           {hint}
         </span>
       )}
+      <HoldOverlay holding={holding} label={previewLabel ?? undefined} />
     </button>
   );
 }
@@ -520,6 +652,7 @@ function ActionButton({
   highlight,
   icon,
   hint,
+  previewLabel,
 }: {
   onClick: () => void;
   onLongPress?: () => void;
@@ -527,33 +660,16 @@ function ActionButton({
   highlight?: boolean;
   icon?: ReactNode;
   hint?: string;
+  previewLabel?: string | null;
 }) {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const triggeredRef = useRef(false);
-
-  function startHold() {
-    if (!onLongPress) return;
-    triggeredRef.current = false;
-    timerRef.current = setTimeout(() => {
-      triggeredRef.current = true;
-      onLongPress();
-    }, 550);
-  }
-  function cancelHold() {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }
+  const { holding, startHold, cancelHold, consumedTrigger } =
+    useLongPress(onLongPress);
 
   return (
     <button
       type="button"
       onClick={() => {
-        if (triggeredRef.current) {
-          triggeredRef.current = false;
-          return;
-        }
+        if (consumedTrigger()) return;
         onClick();
       }}
       onPointerDown={startHold}
@@ -568,7 +684,7 @@ function ActionButton({
         WebkitTapHighlightColor: "transparent",
       }}
       className={
-        "min-h-[88px] rounded-3xl px-4 py-3 text-base font-semibold shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] active:shadow-sm flex flex-col items-center justify-center gap-1 " +
+        "relative overflow-hidden min-h-[88px] rounded-3xl px-4 py-3 text-base font-semibold shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] active:shadow-sm flex flex-col items-center justify-center gap-1 " +
         (highlight
           ? "bg-accent text-white hover:brightness-105"
           : "bg-surface border border-accent-soft text-foreground hover:border-accent/60 hover:-translate-y-px")
@@ -581,6 +697,7 @@ function ActionButton({
           {hint}
         </span>
       )}
+      <HoldOverlay holding={holding} label={previewLabel ?? undefined} />
     </button>
   );
 }
@@ -651,6 +768,53 @@ function SwirlIcon() {
   );
 }
 
+function MixedDiaperIcon() {
+  // Drop overlapping a swirl — the visual fusion of wet + dirty.
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path
+        d="M9 2.5c-.25 0-.49.13-.62.34-.6.85-4.88 7.18-4.88 10.27a5.5 5.5 0 0 0 5.5 5.5 5.5 5.5 0 0 0 5.5-5.5c0-3.09-4.28-9.42-4.88-10.27A.78.78 0 0 0 9 2.5z"
+        fill="currentColor"
+        opacity="0.55"
+      />
+      <path
+        d="M16 9a3.4 3.4 0 0 0-3 5.05A3.4 3.4 0 0 0 11 19.5a3.4 3.4 0 0 0 3.4 3.4h2.4a3.4 3.4 0 0 0 3.4-3.4 3.4 3.4 0 0 0-2.13-6.42A3.4 3.4 0 0 0 16 9z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+function DiaperButton({
+  onClick,
+  icon,
+  label,
+}: {
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        touchAction: "manipulation",
+        WebkitTapHighlightColor: "transparent",
+      }}
+      className="min-h-[72px] rounded-2xl px-3 py-2 text-sm font-semibold shadow-sm transition-all duration-150 hover:shadow-md active:scale-[0.97] flex flex-col items-center justify-center gap-1 bg-surface border border-accent-soft text-foreground hover:border-accent/60"
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
 function PillIcon() {
   return (
     <svg
@@ -710,39 +874,6 @@ function PumpIcon() {
   );
 }
 
-function Sheet({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
-        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-surface p-5 shadow-lg flex flex-col gap-4"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-sm text-muted underline decoration-dotted underline-offset-4"
-          >
-            Close
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 const SHORT_OUTCOMES: { value: BreastFeedOutcome; label: string }[] = [
   { value: "latched_fed", label: "Latched" },

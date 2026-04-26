@@ -55,12 +55,18 @@ function legacyEventsCollection() {
 
 export type EventsSource = "new" | "legacy" | null;
 
-// Default live window is 3 days. Older data is fetched on demand by Trends /
-// Timeline via fetchEventsInRange. Smaller default = fewer reads on every
-// fresh listener attach (PWA reload, tab change, etc).
+// Live listener query is intentionally stable across mounts:
+//   orderBy occurred_at desc, limit N
+// No date filter. Firestore's persistent cache reuses a resume token when
+// the query is identical between sessions, so cache-hit reloads cost 0 reads
+// and only doc changes bill. A dynamic where-clause with Date.now() inside
+// produces a "different" query every mount and forces a full re-sync.
+//
+// Coverage at default limit 200 is roughly 2-3 weeks at typical event rates,
+// which covers Home, History, and the default Insights/Trends ranges. For
+// older data, Trends/Timeline use useExtendedEvents to pull on demand.
 export function useRecentEvents(
-  days = 3,
-  maxCount = 300,
+  maxCount = 500,
 ): {
   events: BabyEvent[];
   loading: boolean;
@@ -77,12 +83,8 @@ export function useRecentEvents(
     if (!hid) return;
     let cancelled = false;
     let triedLegacyFallback = false;
-    const windowStart = Timestamp.fromMillis(
-      Date.now() - days * 24 * 60 * 60 * 1000,
-    );
     const q = query(
       eventsCollection(hid),
-      where("occurred_at", ">=", windowStart),
       orderBy("occurred_at", "desc"),
       limit(maxCount),
     );
@@ -113,7 +115,6 @@ export function useRecentEvents(
           try {
             const legacyQ = query(
               legacyEventsCollection(),
-              where("occurred_at", ">=", windowStart),
               orderBy("occurred_at", "desc"),
               limit(maxCount),
             );
@@ -152,7 +153,7 @@ export function useRecentEvents(
       cancelled = true;
       unsub();
     };
-  }, [hid, maxCount, days]);
+  }, [hid, maxCount]);
 
   return { events, loading, error, source };
 }
@@ -163,6 +164,7 @@ export type NewEventPayload =
   | { type: "pump"; volume_ml: number; side: Side }
   | { type: "diaper_wet" }
   | { type: "diaper_dirty" }
+  | { type: "diaper_mixed" }
   | { type: "sleep_start" }
   | { type: "sleep_end" }
   | { type: "weight"; weight_grams: number; notes?: string }
@@ -247,26 +249,39 @@ export async function fetchEventsInRange(
   return list;
 }
 
-// Given a set of "live" events (the 7-day listener feed) and a requested
+// Given the set of "live" events (count-limited listener feed) and a requested
 // range in days, extend with a one-shot fetch of the older slice if needed.
+// Coverage is derived from the actual oldest live event, not a hardcoded
+// liveDays assumption — so this still works correctly with a limit-only
+// listener whose coverage varies with event volume.
+//
 // The returned list is newest-first and deduped by id.
 export function useExtendedEvents(
   liveEvents: BabyEvent[],
   days: number,
-  liveDays = 7,
 ): { events: BabyEvent[]; loadingMore: boolean } {
   const [older, setOlder] = useState<BabyEvent[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  // Round the live coverage and requested range to day boundaries so the
+  // effect doesn't re-fire every render due to Date.now() jitter.
+  const oldestLiveDay =
+    liveEvents.length > 0
+      ? Math.floor(
+          liveEvents[liveEvents.length - 1]!.occurred_at.toMillis() / 86400000,
+        )
+      : Math.floor(Date.now() / 86400000);
+  const requestedStartDay =
+    Math.floor(Date.now() / 86400000) - days;
+
   useEffect(() => {
-    if (days <= liveDays) {
+    if (oldestLiveDay <= requestedStartDay) {
       setOlder([]);
       return;
     }
     let cancelled = false;
-    const now = new Date();
-    const windowEnd = new Date(now.getTime() - liveDays * 86400000);
-    const windowStart = new Date(now.getTime() - days * 86400000);
+    const windowEnd = new Date(oldestLiveDay * 86400000);
+    const windowStart = new Date(requestedStartDay * 86400000);
     setLoadingMore(true);
     fetchEventsInRange(windowStart, windowEnd)
       .then((events) => {
@@ -281,7 +296,7 @@ export function useExtendedEvents(
     return () => {
       cancelled = true;
     };
-  }, [days, liveDays]);
+  }, [oldestLiveDay, requestedStartDay]);
 
   // Merge live + older, deduping on id. Live wins on conflict so a live
   // edit is preferred over the older snapshot.
@@ -294,33 +309,50 @@ export function useExtendedEvents(
   return { events: merged, loadingMore };
 }
 
-// Live listener for just weight events. Weights are sparse (~1/week) and
-// shown on a chart that spans the baby's whole life, so they need their own
-// narrow query instead of riding the 7-day main feed.
-export function useAllWeights(): BabyEvent[] {
+// Live listener for events of a specific type. Used for sparse types
+// (weights, books, foods, medications) that would be crowded out of the
+// main count-limited listener by frequent feeds/diapers/sleep.
+//
+// The query is stable — type is a literal, limit is fixed, and ordering is
+// deterministic. So persistent cache + resume tokens reuse the listen
+// across mounts and only changed docs are billed.
+export function useEventsByType<T extends BabyEvent["type"]>(
+  type: T,
+  maxCount = 200,
+): Extract<BabyEvent, { type: T }>[] {
   const hid = useHouseholdId();
-  const [weights, setWeights] = useState<BabyEvent[]>([]);
+  const [items, setItems] = useState<Extract<BabyEvent, { type: T }>[]>([]);
 
   useEffect(() => {
     if (!hid) return;
     const q = query(
       eventsCollection(hid),
-      where("type", "==", "weight"),
+      where("type", "==", type),
       orderBy("occurred_at", "desc"),
-      limit(200),
+      limit(maxCount),
     );
     const unsub = onSnapshot(q, (snap) => {
-      const list: BabyEvent[] = [];
+      const list: Extract<BabyEvent, { type: T }>[] = [];
       snap.forEach((d) => {
         const data = d.data() as Omit<BabyEvent, "id">;
-        if (!data.deleted) list.push({ ...(data as BabyEvent), id: d.id });
+        if (!data.deleted) {
+          list.push({
+            ...(data as Extract<BabyEvent, { type: T }>),
+            id: d.id,
+          });
+        }
       });
-      setWeights(list);
+      setItems(list);
     });
     return unsub;
-  }, [hid]);
+  }, [hid, type, maxCount]);
 
-  return weights;
+  return items;
+}
+
+// Backward-compatible thin wrapper.
+export function useAllWeights(): BabyEvent[] {
+  return useEventsByType("weight", 200);
 }
 
 export async function fetchAllEvents(): Promise<BabyEvent[]> {

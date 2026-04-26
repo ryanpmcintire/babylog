@@ -6,6 +6,7 @@ import { useBaby } from "@/lib/useBaby";
 import { weightPercentileGrams } from "@/lib/norms";
 import { useBoolPref } from "@/lib/prefs";
 import { useAllWeights, writeEvent } from "@/lib/useEvents";
+import { Sheet } from "./Sheet";
 
 const DAYS_PROJECTION = 14;
 const REGRESSION_MIN_DAY = 7;
@@ -421,7 +422,7 @@ function WeightLogSheet({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <WeightSheet title="Log weight" onClose={onClose}>
+    <Sheet title="Log weight" onClose={onClose}>
       <div>
         <label className="text-xs uppercase tracking-wider text-muted">
           When
@@ -497,40 +498,6 @@ function WeightLogSheet({ onClose }: { onClose: () => void }) {
       >
         {busy ? "Saving…" : "Log weight"}
       </button>
-    </WeightSheet>
-  );
-}
-
-function WeightSheet({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
-        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-surface p-5 shadow-lg flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-sm text-muted underline decoration-dotted underline-offset-4"
-          >
-            Close
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
+    </Sheet>
   );
 }

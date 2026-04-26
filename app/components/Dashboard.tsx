@@ -20,6 +20,8 @@ import {
   buildDailyBuckets,
   currentSleepState,
   estimateNextEvent,
+  explicitSleepWindows,
+  inferredSleepWindows,
 } from "@/lib/aggregates";
 import {
   maxFeedIntervalHours,
@@ -105,11 +107,17 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
   const sleepingSince = sleep.sleeping ? sleep.since : null;
   let lastWokeAt: Date | null = null;
   if (!sleep.sleeping) {
-    for (const e of events) {
-      if (e.type === "sleep_end") {
-        lastWokeAt = e.occurred_at.toDate();
-        break;
-      }
+    // The "awake since" anchor must be the END of the most recent sleep
+    // window — explicit OR inferred. Using only explicit sleep_end events
+    // produces nonsense like "awake 149h" when sleeps end implicitly via
+    // feeds (the common case once parents stop tapping every wake-up).
+    const windows = [
+      ...explicitSleepWindows(events, now),
+      ...inferredSleepWindows(events, 10, now),
+    ].filter((w) => !w.ongoing && w.end.getTime() <= now.getTime());
+    if (windows.length > 0) {
+      windows.sort((a, b) => b.end.getTime() - a.end.getTime());
+      lastWokeAt = windows[0]!.end;
     }
   }
 
@@ -148,9 +156,18 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
   }
 
   for (const e of events) {
-    if (e.type === "diaper_wet" || e.type === "diaper_dirty") {
+    if (
+      e.type === "diaper_wet" ||
+      e.type === "diaper_dirty" ||
+      e.type === "diaper_mixed"
+    ) {
       lastDiaper = {
-        summary: e.type === "diaper_wet" ? "Wet" : "Dirty",
+        summary:
+          e.type === "diaper_wet"
+            ? "Wet"
+            : e.type === "diaper_dirty"
+              ? "Dirty"
+              : "Mixed",
         at: e.occurred_at.toDate(),
       };
       break;
@@ -270,9 +287,12 @@ export function Dashboard({ events }: { events: BabyEvent[] }) {
             <span className="text-muted"> feeds</span>
           </span>
           <span className="text-muted">·</span>
-          <span>
-            <span className="font-bold">{todayBucket.diapers}</span>
-            <span className="text-muted"> diapers</span>
+          <span title="Wet (incl. mixed) / Dirty (incl. mixed)">
+            <span className="font-bold">{todayBucket.wets}</span>
+            <span className="text-muted">w</span>
+            <span className="text-muted"> / </span>
+            <span className="font-bold">{todayBucket.dirties}</span>
+            <span className="text-muted">d</span>
           </span>
           <span className="text-muted">·</span>
           <span>

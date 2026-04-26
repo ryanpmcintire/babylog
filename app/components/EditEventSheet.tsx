@@ -9,6 +9,7 @@ import {
   TEMP_METHODS,
 } from "@/lib/events";
 import { updateEvent, type NewEventPayload } from "@/lib/useEvents";
+import { Sheet } from "./Sheet";
 
 function toLocalInput(d: Date): string {
   const pad = (n: number) => n.toString().padStart(2, "0");
@@ -55,8 +56,12 @@ export function EditEventSheet({
     event.type === "pump" ? (event.side ?? null) : null,
   );
 
-  const [diaperType, setDiaperType] = useState<"diaper_wet" | "diaper_dirty">(
-    event.type === "diaper_wet" || event.type === "diaper_dirty"
+  const [diaperType, setDiaperType] = useState<
+    "diaper_wet" | "diaper_dirty" | "diaper_mixed"
+  >(
+    event.type === "diaper_wet" ||
+      event.type === "diaper_dirty" ||
+      event.type === "diaper_mixed"
       ? event.type
       : "diaper_wet",
   );
@@ -151,6 +156,7 @@ export function EditEventSheet({
         }
         case "diaper_wet":
         case "diaper_dirty":
+        case "diaper_mixed":
           patch = { ...patch, type: diaperType };
           break;
         case "sleep_start":
@@ -321,11 +327,14 @@ export function EditEventSheet({
           </>
         )}
 
-        {(event.type === "diaper_wet" || event.type === "diaper_dirty") && (
+        {(event.type === "diaper_wet" ||
+          event.type === "diaper_dirty" ||
+          event.type === "diaper_mixed") && (
           <Field label="Type">
             <Segmented
               options={[
                 { value: "diaper_wet", label: "Wet" },
+                { value: "diaper_mixed", label: "Mixed" },
                 { value: "diaper_dirty", label: "Dirty" },
               ]}
               value={diaperType}
@@ -527,36 +536,3 @@ function Segmented<T extends string>({
   );
 }
 
-function Sheet({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
-        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-surface p-5 shadow-lg flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-sm text-muted underline decoration-dotted underline-offset-4"
-          >
-            Close
-          </button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}

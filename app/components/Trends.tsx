@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
+import { FEVER_THRESHOLD_F, HIGH_FEVER_THRESHOLD_F } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
 import { useBaby } from "@/lib/useBaby";
 import { dailySleepNorm } from "@/lib/norms";
@@ -24,8 +25,12 @@ export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
   const milk = buckets.map((b) => b.milkMl);
   const sleepHrs = buckets.map((b) => b.sleepMinutes / 60);
   const feeds = buckets.map((b) => b.feeds);
-  const diapers = buckets.map((b) => b.diapers);
+  const wets = buckets.map((b) => b.wets);
+  const dirties = buckets.map((b) => b.dirties);
   const pumpMl = buckets.map((b) => b.pumpMl);
+  const meds = buckets.map((b) => b.meds);
+  const hasMeds = meds.some((v) => v > 0);
+  const hasTemps = buckets.some((b) => b.maxTempF !== null);
 
   const ageDays = Math.max(
     0,
@@ -87,9 +92,16 @@ export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
         formatValue={(v) => (v ? `${v}` : "")}
       />
       <DailyBars
-        title="Diapers"
+        title="Wets"
         unit="count"
-        values={diapers}
+        values={wets}
+        buckets={buckets}
+        formatValue={(v) => (v ? `${v}` : "")}
+      />
+      <DailyBars
+        title="Dirties"
+        unit="count"
+        values={dirties}
         buckets={buckets}
         formatValue={(v) => (v ? `${v}` : "")}
       />
@@ -100,6 +112,106 @@ export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
         buckets={buckets}
         formatValue={(v) => (v ? `${Math.round(v)}` : "")}
       />
+      {hasMeds && (
+        <DailyBars
+          title="Medications"
+          unit="count"
+          values={meds}
+          buckets={buckets}
+          formatValue={(v) => (v ? `${v}` : "")}
+        />
+      )}
+      {hasTemps && <TempPeaks buckets={buckets} />}
+    </div>
+  );
+}
+
+function TempPeaks({ buckets }: { buckets: DayBucket[] }) {
+  // Show the daily peak temperature with fever-aware coloring. Days without
+  // a reading are skipped (no bar).
+  const max = Math.max(
+    HIGH_FEVER_THRESHOLD_F + 0.5,
+    ...buckets.map((b) => b.maxTempF ?? 0),
+  );
+  const min = Math.min(97, ...buckets.flatMap((b) => (b.maxTempF !== null ? [b.maxTempF] : [])));
+  const span = max - min || 1;
+
+  return (
+    <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
+      <div className="flex items-baseline justify-between mb-3">
+        <h3 className="text-sm font-semibold text-foreground">Temperature</h3>
+        <span className="text-[10px] uppercase tracking-wider text-muted">
+          peak/day · °F
+        </span>
+      </div>
+      <div className="relative">
+        <div
+          className="grid gap-[2px] items-end"
+          style={{
+            gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))`,
+          }}
+        >
+          {buckets.map((b, i) => {
+            const v = b.maxTempF;
+            const pct = v !== null ? ((v - min) / span) * 100 : 0;
+            const color =
+              v === null
+                ? "var(--color-sage-300)"
+                : v >= HIGH_FEVER_THRESHOLD_F
+                  ? "#dc2626"
+                  : v >= FEVER_THRESHOLD_F
+                    ? "#d97706"
+                    : "var(--color-sage-300)";
+            const isLatest = i === buckets.length - 1;
+            return (
+              <div key={i} className="flex flex-col items-center">
+                <span
+                  className={
+                    "text-[10px] tabular-nums leading-tight h-4 " +
+                    (isLatest ? "text-accent font-bold" : "text-muted")
+                  }
+                >
+                  {v !== null ? v.toFixed(1) : ""}
+                </span>
+                <div className="w-full h-[60px] flex items-end">
+                  <div
+                    className="w-full rounded-t-md"
+                    style={{
+                      height:
+                        v !== null ? `${Math.max(pct, 4)}%` : "0%",
+                      background: color,
+                      opacity: v === null ? 0 : 1,
+                    }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div
+        className="grid gap-[2px] mt-1"
+        style={{
+          gridTemplateColumns: `repeat(${buckets.length}, minmax(0, 1fr))`,
+        }}
+      >
+        {buckets.map((b, i) => (
+          <span
+            key={i}
+            className={
+              "text-[9px] text-center truncate " +
+              (i === buckets.length - 1
+                ? "text-foreground font-semibold"
+                : "text-muted")
+            }
+          >
+            {b.label}
+          </span>
+        ))}
+      </div>
+      <p className="text-[9px] text-muted text-right mt-1">
+        amber = fever (≥100.4°F) · red = high fever (≥102.2°F)
+      </p>
     </div>
   );
 }

@@ -4,7 +4,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BabyEvent, FoodReaction } from "@/lib/events";
 import { useBaby } from "@/lib/useBaby";
 import { searchBooks, type BookSearchResult } from "@/lib/openlibrary";
-import { writeEvent, type NewEventPayload } from "@/lib/useEvents";
+import {
+  useEventsByType,
+  writeEvent,
+  type NewEventPayload,
+} from "@/lib/useEvents";
+import { Sheet } from "./Sheet";
 
 const FOOD_UNLOCK_DAYS = 180;
 
@@ -15,7 +20,7 @@ const FOOD_REACTIONS: { value: FoodReaction; label: string }[] = [
   { value: "disliked", label: "Disliked" },
 ];
 
-export function Library({ events }: { events: BabyEvent[] }) {
+export function Library() {
   const [panel, setPanel] = useState<"book" | "food" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const baby = useBaby();
@@ -26,6 +31,12 @@ export function Library({ events }: { events: BabyEvent[] }) {
   );
   const foodsUnlocked = ageDays >= FOOD_UNLOCK_DAYS;
 
+  // Dedicated per-type listeners so book/food history isn't truncated by the
+  // recent-events feed (which is count-limited and would crowd out sparse
+  // types in favor of frequent feeds/diapers).
+  const bookEvents = useEventsByType("book_read", 200);
+  const foodEvents = useEventsByType("food_tried", 200);
+
   const { books, foods } = useMemo(() => {
     const seenBooks = new Map<
       string,
@@ -35,33 +46,32 @@ export function Library({ events }: { events: BabyEvent[] }) {
       string,
       { event: BabyEvent & { type: "food_tried" }; count: number; lastAt: Date }
     >();
-    for (const e of events) {
-      if (e.type === "book_read") {
-        const key = (e.open_library_key ?? e.title).toLowerCase();
-        const at = e.occurred_at.toDate();
-        const existing = seenBooks.get(key);
-        if (!existing || at > existing.lastAt) {
-          seenBooks.set(key, {
-            event: e,
-            count: (existing?.count ?? 0) + 1,
-            lastAt: at,
-          });
-        } else {
-          existing.count += 1;
-        }
-      } else if (e.type === "food_tried") {
-        const key = e.food_name.trim().toLowerCase();
-        const at = e.occurred_at.toDate();
-        const existing = seenFoods.get(key);
-        if (!existing || at > existing.lastAt) {
-          seenFoods.set(key, {
-            event: e,
-            count: (existing?.count ?? 0) + 1,
-            lastAt: at,
-          });
-        } else {
-          existing.count += 1;
-        }
+    for (const e of bookEvents) {
+      const key = (e.open_library_key ?? e.title).toLowerCase();
+      const at = e.occurred_at.toDate();
+      const existing = seenBooks.get(key);
+      if (!existing || at > existing.lastAt) {
+        seenBooks.set(key, {
+          event: e,
+          count: (existing?.count ?? 0) + 1,
+          lastAt: at,
+        });
+      } else {
+        existing.count += 1;
+      }
+    }
+    for (const e of foodEvents) {
+      const key = e.food_name.trim().toLowerCase();
+      const at = e.occurred_at.toDate();
+      const existing = seenFoods.get(key);
+      if (!existing || at > existing.lastAt) {
+        seenFoods.set(key, {
+          event: e,
+          count: (existing?.count ?? 0) + 1,
+          lastAt: at,
+        });
+      } else {
+        existing.count += 1;
       }
     }
     return {
@@ -72,7 +82,7 @@ export function Library({ events }: { events: BabyEvent[] }) {
         (a, b) => b.lastAt.getTime() - a.lastAt.getTime(),
       ),
     };
-  }, [events]);
+  }, [bookEvents, foodEvents]);
 
   function onLogged(msg: string) {
     setPanel(null);
@@ -204,40 +214,6 @@ function BookCard({
       <p className="text-[10px] text-foreground leading-tight line-clamp-2">
         {event.title}
       </p>
-    </div>
-  );
-}
-
-function Sheet({
-  title,
-  onClose,
-  children,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      onClick={onClose}
-      className="fixed inset-0 z-40 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
-        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-surface p-5 shadow-lg flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-sm text-muted underline decoration-dotted underline-offset-4"
-          >
-            Close
-          </button>
-        </div>
-        {children}
-      </div>
     </div>
   );
 }

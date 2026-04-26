@@ -78,25 +78,24 @@ export function HomeClient() {
             type="button"
             onClick={() => setTonightMode(false)}
             aria-label="Exit tonight mode"
-            className="p-2 text-muted hover:text-foreground transition-colors"
+            className="w-11 h-11 -mr-1 rounded-full flex items-center justify-center text-muted hover:text-foreground transition-colors"
           >
-            <SunExitIcon />
+            <ExitIcon />
           </button>
         </div>
-        <div className="w-full max-w-md flex flex-col gap-6 pt-4">
+        <div className="w-full max-w-md flex flex-col gap-5 pt-2">
           {error && (
             <p className="text-center text-xs text-rose-600">{error}</p>
           )}
-          <Dashboard events={events} />
-          <Divider />
+          {/* Sleep first — waking up is the trigger event in the night */}
+          <SleepControl events={events} />
           <ActionGrid
             sleeping={sleeping}
             suggestedBreastSide={suggestedBreastSide}
             events={events}
           />
-          <SleepControl events={events} />
-          <p className="text-center text-[10px] text-muted mt-2">
-            Tonight mode — tap the sun icon above to exit
+          <p className="text-center text-[10px] text-muted mt-1">
+            Tonight mode — tap the exit icon to leave
           </p>
         </div>
       </main>
@@ -160,9 +159,23 @@ export function HomeClient() {
             <button
               type="button"
               onClick={() => setBackdateOpen(true)}
-              className="self-center text-xs text-muted underline decoration-dotted underline-offset-4 hover:text-foreground"
+              className="self-center inline-flex items-center gap-2 rounded-full border border-accent-soft bg-surface px-4 py-1.5 text-xs font-semibold text-foreground hover:border-accent/60 hover:shadow-sm active:scale-[0.97] transition-all"
+              style={{ WebkitTapHighlightColor: "transparent" }}
             >
-              Log something for earlier…
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <polyline points="12 7 12 12 15 14" />
+              </svg>
+              Log for earlier
             </button>
             <Divider />
             <History events={events} />
@@ -177,7 +190,7 @@ export function HomeClient() {
           </>
         )}
 
-        {tab === "library" && <Library events={events} />}
+        {tab === "library" && <Library />}
 
         <div className="flex flex-col items-center gap-2 pt-4">
           {loading && <p className="text-[10px] text-muted">Syncing…</p>}
@@ -284,7 +297,7 @@ function BedIcon() {
   );
 }
 
-function SunExitIcon() {
+function ExitIcon() {
   return (
     <svg
       width="22"
@@ -297,11 +310,8 @@ function SunExitIcon() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <circle cx="12" cy="12" r="4" />
-      <line x1="12" y1="2" x2="12" y2="4" />
-      <line x1="12" y1="20" x2="12" y2="22" />
-      <line x1="2" y1="12" x2="4" y2="12" />
-      <line x1="20" y1="12" x2="22" y2="12" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <line x1="18" y1="6" x2="6" y2="18" />
     </svg>
   );
 }

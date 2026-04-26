@@ -7,7 +7,17 @@ export type DayBucket = {
   pumpMl: number;
   sleepMinutes: number;
   feeds: number;
+  // Total diaper changes (one event = one change, regardless of contents).
   diapers: number;
+  // Output counts: mixed contributes to BOTH wets and dirties so the
+  // pediatrician's "how many wet diapers in 24h" question is accurate.
+  // The change-count `diapers` does NOT double-count.
+  wets: number;
+  dirties: number;
+  mixeds: number;
+  meds: number;
+  // Highest temperature reading on this day, in Fahrenheit. null if no reading.
+  maxTempF: number | null;
 };
 
 export type SleepSegment = {
@@ -34,8 +44,19 @@ export const MIN_INFERRED_SLEEP_MIN = 20;
 export type Marker = {
   dayKey: string;
   atMin: number;
-  kind: "breast" | "bottle" | "pump" | "diaper_wet" | "diaper_dirty";
+  kind:
+    | "breast"
+    | "bottle"
+    | "pump"
+    | "diaper_wet"
+    | "diaper_dirty"
+    | "diaper_mixed"
+    | "medication"
+    | "temperature";
   eventId: string;
+  // For temperature markers: the Fahrenheit reading, used to color the dot
+  // (normal vs fever vs high fever).
+  tempF?: number;
 };
 
 function startOfDay(d: Date): Date {
@@ -77,6 +98,11 @@ export function buildDailyBuckets(
       sleepMinutes: 0,
       feeds: 0,
       diapers: 0,
+      wets: 0,
+      dirties: 0,
+      mixeds: 0,
+      meds: 0,
+      maxTempF: null,
     });
   }
   const byKey = new Map(buckets.map((b) => [dayKey(b.date), b]));
@@ -97,8 +123,26 @@ export function buildDailyBuckets(
         b.pumpMl += e.volume_ml;
         break;
       case "diaper_wet":
+        b.diapers += 1;
+        b.wets += 1;
+        break;
       case "diaper_dirty":
         b.diapers += 1;
+        b.dirties += 1;
+        break;
+      case "diaper_mixed":
+        b.diapers += 1;
+        b.mixeds += 1;
+        b.wets += 1;
+        b.dirties += 1;
+        break;
+      case "medication":
+        b.meds += 1;
+        break;
+      case "temperature":
+        if (b.maxTempF === null || e.temp_f > b.maxTempF) {
+          b.maxTempF = e.temp_f;
+        }
         break;
     }
   }
@@ -447,6 +491,31 @@ export function buildMarkers(events: BabyEvent[]): Marker[] {
           atMin,
           kind: "diaper_dirty",
           eventId: e.id,
+        });
+        break;
+      case "diaper_mixed":
+        markers.push({
+          dayKey: key,
+          atMin,
+          kind: "diaper_mixed",
+          eventId: e.id,
+        });
+        break;
+      case "medication":
+        markers.push({
+          dayKey: key,
+          atMin,
+          kind: "medication",
+          eventId: e.id,
+        });
+        break;
+      case "temperature":
+        markers.push({
+          dayKey: key,
+          atMin,
+          kind: "temperature",
+          eventId: e.id,
+          tempF: e.temp_f,
         });
         break;
     }

@@ -6,6 +6,7 @@ export type EventType =
   | "pump"
   | "diaper_wet"
   | "diaper_dirty"
+  | "diaper_mixed"
   | "sleep_start"
   | "sleep_end"
   | "weight"
@@ -116,6 +117,7 @@ export type BabyEvent = BaseEvent &
     | { type: "pump"; volume_ml: number; side?: Side }
     | { type: "diaper_wet" }
     | { type: "diaper_dirty" }
+    | { type: "diaper_mixed" }
     | { type: "sleep_start" }
     | { type: "sleep_end" }
     | { type: "weight"; weight_grams: number; notes?: string }

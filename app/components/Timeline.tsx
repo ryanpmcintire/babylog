@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
+import { FEVER_THRESHOLD_F, HIGH_FEVER_THRESHOLD_F } from "@/lib/events";
 import {
   buildMarkers,
   buildSleepSegments,
@@ -198,7 +199,12 @@ const MARKER_COLORS = {
   sleep: "var(--color-sage-400)",
   feed: "#bd7d7d", // rose — warm pink
   diaper: "#7689b8", // dusty periwinkle blue — cool, opposite the warm feed pink
+  diaperMixed: "#8a6fa8", // muted plum — between feed pink and diaper blue
   pump: "#c49b5b", // ochre gold — warm but yellow, distinct from feed red
+  medication: "#7c8d68", // moss green — distinct from feed/diaper, calm
+  tempNormal: "#9ca3af", // neutral grey — non-fever readings
+  tempFever: "#d97706", // amber
+  tempHigh: "#dc2626", // rose
 };
 
 function Legend() {
@@ -216,6 +222,9 @@ function Legend() {
       </span>
       <LegendDot color={MARKER_COLORS.feed} label="feed" />
       <LegendDot color={MARKER_COLORS.diaper} label="diaper" />
+      <LegendDot color={MARKER_COLORS.diaperMixed} label="mixed" />
+      <LegendDot color={MARKER_COLORS.medication} label="med" />
+      <LegendDot color={MARKER_COLORS.tempFever} label="temp" />
     </div>
   );
 }
@@ -349,6 +358,55 @@ function DayRow({
   );
 }
 
+function markerVisuals(marker: Marker): {
+  color: string;
+  topPercent: number;
+  shape: "dot" | "square";
+  label: string;
+} {
+  switch (marker.kind) {
+    case "breast":
+    case "bottle":
+      return { color: MARKER_COLORS.feed, topPercent: 22, shape: "dot", label: "feed" };
+    case "diaper_wet":
+    case "diaper_dirty":
+    case "diaper_mixed":
+      return {
+        color:
+          marker.kind === "diaper_mixed"
+            ? MARKER_COLORS.diaperMixed
+            : MARKER_COLORS.diaper,
+        topPercent: 50,
+        shape: "dot",
+        label:
+          marker.kind === "diaper_wet"
+            ? "wet"
+            : marker.kind === "diaper_dirty"
+              ? "dirty"
+              : "mixed",
+      };
+    case "pump":
+      return { color: MARKER_COLORS.pump, topPercent: 75, shape: "dot", label: "pump" };
+    case "medication":
+      return {
+        color: MARKER_COLORS.medication,
+        topPercent: 78,
+        shape: "square",
+        label: "med",
+      };
+    case "temperature": {
+      const f = marker.tempF ?? 0;
+      const color =
+        f >= HIGH_FEVER_THRESHOLD_F
+          ? MARKER_COLORS.tempHigh
+          : f >= FEVER_THRESHOLD_F
+            ? MARKER_COLORS.tempFever
+            : MARKER_COLORS.tempNormal;
+      return { color, topPercent: 88, shape: "square", label: `${f.toFixed(1)}°F` };
+    }
+  }
+}
+
 function MarkerDot({
   marker,
   days,
@@ -358,20 +416,9 @@ function MarkerDot({
   days: number;
   onClick: () => void;
 }) {
-  const isPump = marker.kind === "pump";
-  const isFeed = marker.kind === "breast" || marker.kind === "bottle";
-
-  const color = isFeed
-    ? MARKER_COLORS.feed
-    : isPump
-      ? MARKER_COLORS.pump
-      : MARKER_COLORS.diaper;
-
+  const { color, topPercent, shape, label } = markerVisuals(marker);
   const size = days <= 7 ? 8 : days <= 14 ? 7 : 6;
   const hit = Math.max(size + 12, 22);
-
-  // Three tiers — feeds top, diapers middle, pumps bottom.
-  const topPercent = isFeed ? 25 : isPump ? 75 : 50;
 
   return (
     <button
@@ -390,12 +437,17 @@ function MarkerDot({
         cursor: "pointer",
         WebkitTapHighlightColor: "transparent",
       }}
-      aria-label={`${marker.kind} at ${minutesToLabel(marker.atMin)}`}
-      title={`${marker.kind} at ${minutesToLabel(marker.atMin)}`}
+      aria-label={`${label} at ${minutesToLabel(marker.atMin)}`}
+      title={`${label} at ${minutesToLabel(marker.atMin)}`}
     >
       <span
-        className="rounded-full pointer-events-none"
-        style={{ width: size, height: size, background: color }}
+        className="pointer-events-none"
+        style={{
+          width: size,
+          height: size,
+          background: color,
+          borderRadius: shape === "dot" ? "9999px" : "2px",
+        }}
       />
     </button>
   );
