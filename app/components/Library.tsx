@@ -6,9 +6,11 @@ import { useBaby } from "@/lib/useBaby";
 import { searchBooks, type BookSearchResult } from "@/lib/openlibrary";
 import {
   useEventsByType,
+  VIEWS_FLAG_ENABLED,
   writeEvent,
   type NewEventPayload,
 } from "@/lib/useEvents";
+import { Timestamp } from "firebase/firestore";
 import { Sheet } from "./Sheet";
 
 const FOOD_UNLOCK_DAYS = 180;
@@ -25,7 +27,6 @@ export function Library({
 }: {
   libraryView?: import("@/lib/views").LibraryView | null;
 } = {}) {
-  void libraryView;
   const [panel, setPanel] = useState<"book" | "food" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const baby = useBaby();
@@ -36,13 +37,58 @@ export function Library({
   );
   const foodsUnlocked = ageDays >= FOOD_UNLOCK_DAYS;
 
-  // Dedicated per-type listeners so book/food history isn't truncated by the
-  // recent-events feed (which is count-limited and would crowd out sparse
-  // types in favor of frequent feeds/diapers).
-  const bookEvents = useEventsByType("book_read", 200);
-  const foodEvents = useEventsByType("food_tried", 200);
+  // When the library view is loaded, render straight from its deduped
+  // arrays. No raw-event listeners attached.
+  const useView = VIEWS_FLAG_ENABLED && libraryView != null;
+  const bookEvents = useEventsByType("book_read", useView ? 0 : 200);
+  const foodEvents = useEventsByType("food_tried", useView ? 0 : 200);
 
   const { books, foods } = useMemo(() => {
+    if (useView && libraryView) {
+      const books = libraryView.books.map((b) => ({
+        event: {
+          id: b.last_event_id,
+          type: "book_read" as const,
+          occurred_at: Timestamp.fromMillis(b.last_at),
+          created_at: Timestamp.fromMillis(b.last_at),
+          created_by: "",
+          deleted: false,
+          title: b.title,
+          author: b.author,
+          cover_url: b.cover_url,
+          open_library_key: b.open_library_key,
+        } satisfies BabyEvent & { type: "book_read" },
+        count: b.count,
+        lastAt: new Date(b.last_at),
+      }));
+      const foods = libraryView.foods.map((f) => {
+        // Surface the most-frequent reaction for the row badge.
+        let topReaction: FoodReaction | undefined;
+        let topCount = 0;
+        for (const [r, c] of Object.entries(f.reactions)) {
+          if ((c ?? 0) > topCount) {
+            topReaction = r as FoodReaction;
+            topCount = c as number;
+          }
+        }
+        return {
+          event: {
+            id: f.last_event_id,
+            type: "food_tried" as const,
+            occurred_at: Timestamp.fromMillis(f.last_at),
+            created_at: Timestamp.fromMillis(f.last_at),
+            created_by: "",
+            deleted: false,
+            food_name: f.food_name,
+            reaction: topReaction,
+            first_try: !!f.first_try_at,
+          } satisfies BabyEvent & { type: "food_tried" },
+          count: f.count,
+          lastAt: new Date(f.last_at),
+        };
+      });
+      return { books, foods };
+    }
     const seenBooks = new Map<
       string,
       { event: BabyEvent & { type: "book_read" }; count: number; lastAt: Date }
@@ -87,7 +133,7 @@ export function Library({
         (a, b) => b.lastAt.getTime() - a.lastAt.getTime(),
       ),
     };
-  }, [bookEvents, foodEvents]);
+  }, [useView, libraryView, bookEvents, foodEvents]);
 
   function onLogged(msg: string) {
     setPanel(null);

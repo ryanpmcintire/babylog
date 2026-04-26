@@ -26,7 +26,6 @@ import {
   initializeApp,
 } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import { Timestamp as ClientTimestamp } from "firebase/firestore";
 import { getAllHouseholdSeeds } from "../lib/household";
 import {
   computeHomeView,
@@ -59,6 +58,9 @@ if (!getApps().length) {
   );
 }
 const db = getFirestore();
+// Optional event fields (weight notes, breast side, etc.) frequently come
+// through as undefined; admin SDK rejects those by default.
+db.settings({ ignoreUndefinedProperties: true });
 
 async function prodConfirmGate(): Promise<void> {
   if (!isProd) return;
@@ -69,10 +71,11 @@ async function prodConfirmGate(): Promise<void> {
   await new Promise((r) => setTimeout(r, 5000));
 }
 
-// Convert admin-SDK Timestamp fields on the event docs to client-SDK
-// Timestamps so the pure compute functions (which type events with the
-// client SDK Timestamp) accept them. The runtime API shape is the same;
-// it's only TypeScript that cares.
+// Admin-SDK Timestamp has the same toMillis/toDate API surface that the
+// pure compute functions use, so we cast through unknown rather than
+// constructing client-SDK Timestamp instances. This also lets the
+// resulting view docs (which embed events in recent_events) use admin
+// Timestamps that are then valid inputs to admin batch.set.
 type AdminEventDoc = Record<string, unknown> & {
   occurred_at: Timestamp;
   created_at: Timestamp;
@@ -81,19 +84,8 @@ type AdminEventDoc = Record<string, unknown> & {
   type: string;
 };
 
-function toClientEvent(id: string, raw: AdminEventDoc): BabyEvent {
-  const fix = (t: Timestamp | undefined): ClientTimestamp | undefined =>
-    t
-      ? new ClientTimestamp(t.seconds, t.nanoseconds)
-      : undefined;
-  const base: Record<string, unknown> = {
-    ...raw,
-    id,
-    occurred_at: fix(raw.occurred_at),
-    created_at: fix(raw.created_at),
-  };
-  if (raw.updated_at) base.updated_at = fix(raw.updated_at);
-  return base as BabyEvent;
+function toEvent(id: string, raw: AdminEventDoc): BabyEvent {
+  return { ...raw, id } as unknown as BabyEvent;
 }
 
 async function backfillHousehold(hid: string): Promise<{
@@ -101,7 +93,7 @@ async function backfillHousehold(hid: string): Promise<{
 }> {
   const eventsSnap = await db.collection(`households/${hid}/events`).get();
   const events: BabyEvent[] = eventsSnap.docs.map((d) =>
-    toClientEvent(d.id, d.data() as AdminEventDoc),
+    toEvent(d.id, d.data() as AdminEventDoc),
   );
   console.log(`  ${hid}: ${events.length} events`);
 

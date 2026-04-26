@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Timestamp } from "firebase/firestore";
+
+function TimestampFromMillis(ms: number): Timestamp {
+  return Timestamp.fromMillis(ms);
+}
+
 import { formatBabyAge } from "@/lib/age";
 import { useBaby } from "@/lib/useBaby";
 import {
@@ -202,20 +208,55 @@ export function Dashboard({
   events: BabyEvent[];
   homeView?: import("@/lib/views").HomeView | null;
 }) {
-  // homeView is consumed once we wire the dashboard fully off raw events.
-  // Currently it's accepted-but-unused so HomeClient can pass it through;
-  // a follow-up pass will read latest pointers / today / sleep_state from
-  // it and stop deriving them from `events`.
-  void homeView;
   const [now, setNow] = useState(() => Date.now());
   const funAgeMode = useFunAgeMode();
   const rhythmClass = rhythmClassFor(funAgeMode);
   const baby = useBaby();
-  const derived = deriveState(events, new Date(now));
-  // Merge feed events within 15 min — L+R breast sessions or quick top-ups are
-  // a single feeding, not two separate data points.
+  // When the home view is loaded, all the raw-event derivations below
+  // operate on its embedded recent_events array (50 newest, server-side
+  // pre-filtered for !deleted). Falls back to the prop when the view
+  // hasn't arrived yet or the views flag is off.
+  const effectiveEvents = homeView?.recent_events ?? events;
+  // FeverCard wants last-24h temps and MedAdherenceCard wants last-7d meds.
+  // Both windows can extend past recent_events_50, so merge in the view's
+  // dedicated windowed arrays (de-duplicated by id).
+  const cardEvents = useMemo(() => {
+    if (!homeView) return effectiveEvents;
+    const byId = new Map<string, BabyEvent>();
+    for (const e of effectiveEvents) byId.set(e.id, e);
+    for (const m of homeView.meds_last_7d) {
+      if (byId.has(m.eventId)) continue;
+      byId.set(m.eventId, {
+        id: m.eventId,
+        type: "medication",
+        occurred_at: TimestampFromMillis(m.at),
+        created_at: TimestampFromMillis(m.at),
+        created_by: "",
+        deleted: false,
+        name: m.name,
+        dose: m.dose,
+      } as BabyEvent);
+    }
+    for (const t of homeView.temps_last_24h) {
+      if (byId.has(t.eventId)) continue;
+      byId.set(t.eventId, {
+        id: t.eventId,
+        type: "temperature",
+        occurred_at: TimestampFromMillis(t.at),
+        created_at: TimestampFromMillis(t.at),
+        created_by: "",
+        deleted: false,
+        temp_f: t.temp_f,
+        method: t.method,
+      } as BabyEvent);
+    }
+    return Array.from(byId.values()).sort(
+      (a, b) => b.occurred_at.toMillis() - a.occurred_at.toMillis(),
+    );
+  }, [homeView, effectiveEvents]);
+  const derived = deriveState(effectiveEvents, new Date(now));
   const rawNextFeed = estimateNextEvent(
-    events,
+    effectiveEvents,
     ["breast_feed", "bottle_feed"],
     8,
     15 * 60 * 1000,
@@ -238,7 +279,7 @@ export function Dashboard({
       : rawNextFeed;
   // Merge wet+dirty events within 15 minutes — they're typically the same change.
   const nextDiaper = estimateNextEvent(
-    events,
+    effectiveEvents,
     ["diaper_wet", "diaper_dirty"],
     8,
     15 * 60 * 1000,
@@ -251,9 +292,17 @@ export function Dashboard({
 
   const age = formatBabyAge(baby.birthdate, new Date(now));
 
-  const todayBucket = buildDailyBuckets(events, 1, new Date(now), {
-    inferBufferMin: 10,
-  })[0];
+  // Today's totals: read from the home view when available (the value is
+  // dual-write maintained), otherwise compute on the fly.
+  const todayBucket = homeView
+    ? {
+        feeds: homeView.today.feeds,
+        diapers: homeView.today.diapers,
+        wets: homeView.today.wets,
+        dirties: homeView.today.dirties,
+        sleepMinutes: homeView.today.sleepMinutes,
+      }
+    : buildDailyBuckets(events, 1, new Date(now), { inferBufferMin: 10 })[0];
   const sleepHours = todayBucket ? todayBucket.sleepMinutes / 60 : 0;
   const sleepHrsWhole = Math.floor(sleepHours);
   const sleepMinsRem = Math.round((sleepHours - sleepHrsWhole) * 60);
@@ -313,8 +362,8 @@ export function Dashboard({
         </div>
       )}
 
-      <FeverCard events={events} ageDays={feedAgeDays} now={now} />
-      <MedAdherenceCard events={events} now={new Date(now)} />
+      <FeverCard events={cardEvents} ageDays={feedAgeDays} now={now} />
+      <MedAdherenceCard events={cardEvents} now={new Date(now)} />
 
       <SleepStatusChip
         sleepingSince={derived.sleepingSince}

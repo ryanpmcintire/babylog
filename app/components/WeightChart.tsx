@@ -43,7 +43,7 @@ export function WeightChart({
   // Skip the dedicated weights listener entirely when the view is loaded —
   // weights live inside insightsView.weights as a single small array.
   const useView = VIEWS_FLAG_ENABLED && insightsView != null;
-  const weightEvents = useAllWeights();
+  const weightEvents = useAllWeights(!useView);
   const baby = useBaby();
 
   const points = useMemo<WeightPoint[]>(() => {

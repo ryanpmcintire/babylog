@@ -197,11 +197,20 @@ function buildRows(events: BabyEvent[]): HistoryRow[] {
   return rows;
 }
 
-export function History({ events }: { events: BabyEvent[] }) {
+export function History({
+  events,
+  homeView,
+}: {
+  events: BabyEvent[];
+  homeView?: import("@/lib/views").HomeView | null;
+}) {
   const { user } = useAuth();
   const [editing, setEditing] = useState<BabyEvent | null>(null);
+  // When the home view is loaded, render from its embedded recent_events
+  // (50 newest, deleted-filtered, deduped vs the live listener data).
+  const renderEvents = homeView?.recent_events ?? events;
   const groups = useMemo(() => {
-    const rows = buildRows(events);
+    const rows = buildRows(renderEvents);
     const byDay = new Map<string, { label: string; rows: HistoryRow[] }>();
     for (const row of rows) {
       const key = dayKey(row.at);
@@ -211,9 +220,9 @@ export function History({ events }: { events: BabyEvent[] }) {
       byDay.get(key)!.rows.push(row);
     }
     return Array.from(byDay.values());
-  }, [events]);
+  }, [renderEvents]);
 
-  if (events.length === 0) {
+  if (renderEvents.length === 0) {
     return (
       <div className="w-full rounded-3xl border border-accent-soft bg-surface p-6 text-center">
         <p className="text-sm text-muted">

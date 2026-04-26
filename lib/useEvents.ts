@@ -171,11 +171,12 @@ export type EventsSource = "new" | "legacy" | null;
 // and only doc changes bill. A dynamic where-clause with Date.now() inside
 // produces a "different" query every mount and forces a full re-sync.
 //
-// Coverage at default limit 200 is roughly 2-3 weeks at typical event rates,
-// which covers Home, History, and the default Insights/Trends ranges. For
-// older data, Trends/Timeline use useExtendedEvents to pull on demand.
+// Default count: tight when views are on (only feeds the dual-write's
+// projection of changes onto recent state — chart/dashboard renders read
+// the materialized view doc instead). Wider when views are off so the
+// legacy in-memory bucketing path has enough history.
 export function useRecentEvents(
-  maxCount = 500,
+  maxCount = VIEWS_ENABLED ? 200 : 500,
 ): {
   events: BabyEvent[];
   loading: boolean;
@@ -740,6 +741,9 @@ export function useEventsByType<T extends BabyEvent["type"]>(
 
   useEffect(() => {
     if (!hid) return;
+    // Caller can pass maxCount=0 to opt out entirely (e.g. when reading
+    // the same data from a materialized view doc instead).
+    if (maxCount <= 0) return;
     const q = query(
       eventsCollection(hid),
       where("type", "==", type),
@@ -765,9 +769,11 @@ export function useEventsByType<T extends BabyEvent["type"]>(
   return items;
 }
 
-// Backward-compatible thin wrapper.
-export function useAllWeights(): BabyEvent[] {
-  return useEventsByType("weight", 200);
+// Backward-compatible thin wrapper. Pass enabled=false to skip the
+// underlying listener attachment entirely (used when the caller is
+// reading weights from the materialized insights view doc instead).
+export function useAllWeights(enabled = true): BabyEvent[] {
+  return useEventsByType("weight", enabled ? 200 : 0);
 }
 
 // Live listener over a [today - days + 1, today] range of daily summary

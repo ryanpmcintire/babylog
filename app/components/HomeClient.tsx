@@ -193,7 +193,7 @@ export function HomeClient() {
               Log for earlier
             </button>
             <Divider />
-            <History events={events} />
+            <History events={events} homeView={homeView} />
           </>
         )}
 
