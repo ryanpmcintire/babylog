@@ -6,21 +6,73 @@ import { FEVER_THRESHOLD_F, HIGH_FEVER_THRESHOLD_F } from "@/lib/events";
 import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
 import { useBaby } from "@/lib/useBaby";
 import { dailySleepNorm } from "@/lib/norms";
-import { useExtendedEvents } from "@/lib/useEvents";
+import {
+  useExtendedEvents,
+  useDailySummariesRange,
+  SUMMARIES_FLAG_ENABLED,
+} from "@/lib/useEvents";
+import { dayKeyOf, type DailySummary } from "@/lib/summaries";
 
 const RANGE_OPTIONS = [3, 7, 14, 30];
 
+function summariesToBuckets(
+  summaries: DailySummary[],
+  now: Date,
+): DayBucket[] {
+  const todayKey = dayKeyOf(now);
+  return summaries.map((s) => {
+    const [y, m, d] = s.dayKey.split("-").map((n) => parseInt(n, 10));
+    const date = new Date(y!, m! - 1, d!);
+    const diff = Math.round(
+      (new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() -
+        date.getTime()) /
+        86400000,
+    );
+    const label =
+      s.dayKey === todayKey
+        ? "Today"
+        : diff === 1
+          ? "Yest"
+          : date.toLocaleDateString(undefined, { weekday: "short" });
+    return {
+      date,
+      label,
+      milkMl: s.milkMl,
+      pumpMl: s.pumpMl,
+      sleepMinutes: s.sleepMinutes,
+      feeds: s.feeds,
+      diapers: s.diapers,
+      wets: s.wets,
+      dirties: s.dirties,
+      mixeds: s.mixeds,
+      meds: s.meds,
+      maxTempF: s.maxTempF,
+    };
+  });
+}
+
 export function Trends({ events: liveEvents }: { events: BabyEvent[] }) {
   const [days, setDays] = useState(7);
-  const { events, loadingMore } = useExtendedEvents(liveEvents, days);
   const baby = useBaby();
 
-  const buckets = useMemo(
-    () => buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 }),
-    [events, days],
+  // Summaries path: one query for the date range, billed at ~`days` reads
+  // total instead of one per raw event. Falls back to raw-event bucketing
+  // when the flag is off.
+  const { summaries } = useDailySummariesRange(days);
+  const { events, loadingMore } = useExtendedEvents(
+    SUMMARIES_FLAG_ENABLED ? [] : liveEvents,
+    SUMMARIES_FLAG_ENABLED ? 0 : days,
   );
 
-  if (events.length === 0) return null;
+  const buckets = useMemo(() => {
+    if (SUMMARIES_FLAG_ENABLED) {
+      return summariesToBuckets(summaries, new Date());
+    }
+    return buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 });
+  }, [summaries, events, days]);
+
+  if (!SUMMARIES_FLAG_ENABLED && events.length === 0) return null;
+  if (SUMMARIES_FLAG_ENABLED && summaries.length === 0) return null;
 
   const milk = buckets.map((b) => b.milkMl);
   const sleepHrs = buckets.map((b) => b.sleepMinutes / 60);

@@ -6,17 +6,28 @@ import {
   collection,
   doc,
   getDocs,
+  increment,
   limit,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   Timestamp,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 import { getDb, getFirebaseAuth } from "./firebase";
 import { getHouseholdIdForEmail } from "./household";
 import { useHouseholdId } from "./useHousehold";
+import {
+  dayKeyOf,
+  deltaForEvent,
+  inverseDelta,
+  splitSleepMinutes,
+  type DailySummary,
+  type SummaryDelta,
+} from "./summaries";
 import type {
   BabyEvent,
   BreastFeedOutcome,
@@ -25,6 +36,12 @@ import type {
   Side,
   TempMethod,
 } from "./events";
+
+// Dual-write to households/{hid}/daily_summaries/* gated behind this flag.
+// Default false so prod is unaffected until cutover. Flip to "true" in
+// Vercel env after backfill is run against prod.
+const SUMMARIES_ENABLED =
+  process.env.NEXT_PUBLIC_USE_SUMMARIES === "true";
 
 // Resolve the household id for a write operation. Throws if the signed-in
 // user has no mapping — should never happen in practice (allowlist gates
@@ -45,6 +62,21 @@ function eventsCollection(hid: string) {
 
 function eventDoc(hid: string, eventId: string) {
   return doc(getDb(), "households", hid, "events", eventId);
+}
+
+function summaryDoc(hid: string, dayKey: string) {
+  return doc(getDb(), "households", hid, "daily_summaries", dayKey);
+}
+
+// Convert a SummaryDelta into a Firestore update payload using
+// FieldValue.increment for each numeric field. set(merge:true) creates the
+// summary doc on first write for a given day.
+function deltaToIncrements(delta: SummaryDelta): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(delta)) {
+    if (typeof v === "number" && v !== 0) out[k] = increment(v);
+  }
+  return out;
 }
 
 // Old top-level events path. Read-only fallback during the Phase B transition
@@ -204,24 +236,260 @@ export async function writeEvent(
   const user = auth.currentUser!;
   const now = occurredAt ?? new Date();
   const nowTs = Timestamp.fromDate(now);
-
-  const ref = await addDoc(eventsCollection(hid), {
+  const eventBase = {
     ...payload,
     occurred_at: nowTs,
     created_by: user.uid,
     created_by_email: user.email ?? null,
     created_at: nowTs,
     deleted: false,
-  });
-  return ref.id;
+  };
+
+  if (!SUMMARIES_ENABLED) {
+    const ref = await addDoc(eventsCollection(hid), eventBase);
+    return ref.id;
+  }
+  return writeEventWithSummary(hid, eventBase, payload, now);
 }
 
 export async function softDeleteEvent(id: string): Promise<void> {
   const hid = requireHouseholdId();
-  await updateDoc(eventDoc(hid, id), {
-    deleted: true,
-    updated_at: Timestamp.now(),
+  if (!SUMMARIES_ENABLED) {
+    await updateDoc(eventDoc(hid, id), {
+      deleted: true,
+      updated_at: Timestamp.now(),
+    });
+    return;
+  }
+  await deleteEventWithSummary(hid, id);
+}
+
+// ---- Dual-write internals (only reached when SUMMARIES_ENABLED) ----
+
+async function writeEventWithSummary(
+  hid: string,
+  eventBase: Record<string, unknown>,
+  payload: NewEventPayload,
+  occurredAt: Date,
+): Promise<string> {
+  const newRef = doc(eventsCollection(hid));
+
+  // Sleep_end: needs a transaction to find the matching open sleep_start
+  // and split the resulting window across day boundaries.
+  if (payload.type === "sleep_end") {
+    return writeSleepEndWithSummary(hid, newRef, eventBase, occurredAt);
+  }
+
+  // Temperature: needs a transaction to read current max and compare.
+  if (payload.type === "temperature") {
+    return writeTemperatureWithSummary(
+      hid,
+      newRef,
+      eventBase,
+      payload,
+      occurredAt,
+    );
+  }
+
+  // Pure-counter case: writeBatch + FieldValue.increment is atomic and
+  // avoids the read cost a transaction would incur.
+  const delta = deltaForEvent({ type: payload.type, ...(payload as object) });
+  const batch = writeBatch(getDb());
+  batch.set(newRef, eventBase);
+  if (delta) {
+    const dayKey = dayKeyOf(occurredAt);
+    batch.set(
+      summaryDoc(hid, dayKey),
+      { dayKey, ...deltaToIncrements(delta), updated_at: Timestamp.now() },
+      { merge: true },
+    );
+  }
+  await batch.commit();
+  return newRef.id;
+}
+
+async function writeSleepEndWithSummary(
+  hid: string,
+  newRef: ReturnType<typeof doc>,
+  eventBase: Record<string, unknown>,
+  occurredAt: Date,
+): Promise<string> {
+  // Find the matching open sleep_start: most recent sleep_start with no
+  // sleep_end after it. Read just enough recent events to pair them.
+  const recentQ = query(
+    eventsCollection(hid),
+    orderBy("occurred_at", "desc"),
+    limit(50),
+  );
+  const recent = await getDocs(recentQ);
+  let openStartAt: Date | null = null;
+  // Walk newest-first; first sleep_end means our search target is older
+  // than that and unrelated.
+  for (const d of recent.docs) {
+    const data = d.data() as { type: string; deleted?: boolean; occurred_at: Timestamp };
+    if (data.deleted) continue;
+    if (data.type === "sleep_end") break;
+    if (data.type === "sleep_start") {
+      openStartAt = data.occurred_at.toDate();
+      break;
+    }
+  }
+
+  const batch = writeBatch(getDb());
+  let minutesByDay: Record<string, number> = {};
+  if (openStartAt && occurredAt > openStartAt) {
+    minutesByDay = splitSleepMinutes(openStartAt, occurredAt);
+    for (const [dk, mins] of Object.entries(minutesByDay)) {
+      batch.set(
+        summaryDoc(hid, dk),
+        {
+          dayKey: dk,
+          sleepMinutes: increment(mins),
+          updated_at: Timestamp.now(),
+        },
+        { merge: true },
+      );
+    }
+  }
+  batch.set(newRef, {
+    ...eventBase,
+    sleep_minutes_by_day: minutesByDay,
   });
+  await batch.commit();
+  return newRef.id;
+}
+
+async function writeTemperatureWithSummary(
+  hid: string,
+  newRef: ReturnType<typeof doc>,
+  eventBase: Record<string, unknown>,
+  payload: Extract<NewEventPayload, { type: "temperature" }>,
+  occurredAt: Date,
+): Promise<string> {
+  const dayKey = dayKeyOf(occurredAt);
+  const ref = summaryDoc(hid, dayKey);
+  await runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    const cur = snap.exists() ? (snap.data() as { maxTempF?: number | null }) : null;
+    const newMax =
+      cur?.maxTempF == null || payload.temp_f > cur.maxTempF
+        ? payload.temp_f
+        : cur.maxTempF;
+    tx.set(
+      ref,
+      { dayKey, maxTempF: newMax, updated_at: Timestamp.now() },
+      { merge: true },
+    );
+    tx.set(newRef, eventBase);
+  });
+  return newRef.id;
+}
+
+async function deleteEventWithSummary(
+  hid: string,
+  id: string,
+): Promise<void> {
+  const ref = eventDoc(hid, id);
+  const snap = await getDocs(
+    query(eventsCollection(hid), where("__name__", "==", id), limit(1)),
+  );
+  // The query above is more permissive of cache hits than getDoc, but a
+  // direct getDoc would also work. Use the result we have.
+  const data = snap.empty
+    ? null
+    : (snap.docs[0]!.data() as Record<string, unknown> & {
+        type: string;
+        occurred_at: Timestamp;
+        deleted?: boolean;
+        sleep_minutes_by_day?: Record<string, number>;
+        temp_f?: number;
+        volume_ml?: number;
+      });
+  if (!data || data.deleted) {
+    // Already deleted or missing — just mark and bail.
+    await updateDoc(ref, { deleted: true, updated_at: Timestamp.now() });
+    return;
+  }
+
+  const occurredAt = data.occurred_at.toDate();
+  const dayKey = dayKeyOf(occurredAt);
+
+  // Sleep_end: invert the stored per-day minute map.
+  if (data.type === "sleep_end") {
+    const map = data.sleep_minutes_by_day ?? {};
+    const batch = writeBatch(getDb());
+    for (const [dk, mins] of Object.entries(map)) {
+      batch.set(
+        summaryDoc(hid, dk),
+        {
+          dayKey: dk,
+          sleepMinutes: increment(-mins),
+          updated_at: Timestamp.now(),
+        },
+        { merge: true },
+      );
+    }
+    batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
+    await batch.commit();
+    return;
+  }
+
+  // Temperature: max isn't directly invertible. Recompute from the day's
+  // remaining temp events.
+  if (data.type === "temperature") {
+    const dayStart = new Date(
+      occurredAt.getFullYear(),
+      occurredAt.getMonth(),
+      occurredAt.getDate(),
+    );
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+    const tempQ = query(
+      eventsCollection(hid),
+      where("type", "==", "temperature"),
+      where("occurred_at", ">=", Timestamp.fromDate(dayStart)),
+      where("occurred_at", "<", Timestamp.fromDate(dayEnd)),
+    );
+    const tempSnap = await getDocs(tempQ);
+    let newMax: number | null = null;
+    for (const d of tempSnap.docs) {
+      if (d.id === id) continue;
+      const td = d.data() as { temp_f?: number; deleted?: boolean };
+      if (td.deleted) continue;
+      if (typeof td.temp_f === "number") {
+        if (newMax === null || td.temp_f > newMax) newMax = td.temp_f;
+      }
+    }
+    const batch = writeBatch(getDb());
+    batch.set(
+      summaryDoc(hid, dayKey),
+      { dayKey, maxTempF: newMax, updated_at: Timestamp.now() },
+      { merge: true },
+    );
+    batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
+    await batch.commit();
+    return;
+  }
+
+  // Pure-counter case: invert the original delta.
+  const delta = deltaForEvent({
+    type: data.type as never,
+    volume_ml: data.volume_ml,
+  });
+  const batch = writeBatch(getDb());
+  if (delta) {
+    batch.set(
+      summaryDoc(hid, dayKey),
+      {
+        dayKey,
+        ...deltaToIncrements(inverseDelta(delta)),
+        updated_at: Timestamp.now(),
+      },
+      { merge: true },
+    );
+  }
+  batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
+  await batch.commit();
 }
 
 // One-shot fetch of events in a specific [startDate, endDate) window. Used by
@@ -355,6 +623,80 @@ export function useAllWeights(): BabyEvent[] {
   return useEventsByType("weight", 200);
 }
 
+// Live listener over a [today - days + 1, today] range of daily summary
+// docs. Returns an array of N entries (oldest first) padded with empty
+// summaries for days that have no doc yet. Charts read from this to avoid
+// pulling raw events.
+//
+// Only attaches when SUMMARIES_ENABLED is true. Call sites should fall
+// back to raw-event bucketing when the flag is off.
+export function useDailySummariesRange(
+  days: number,
+): { summaries: DailySummary[]; loading: boolean } {
+  const hid = useHouseholdId();
+  const [summaries, setSummaries] = useState<DailySummary[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const todayKey = dayKeyOf(new Date());
+
+  useEffect(() => {
+    if (!SUMMARIES_ENABLED || !hid) {
+      setSummaries([]);
+      setLoading(false);
+      return;
+    }
+    const today = new Date();
+    const start = new Date(today);
+    start.setDate(start.getDate() - (days - 1));
+    const startKey = dayKeyOf(start);
+
+    const col = collection(getDb(), "households", hid, "daily_summaries");
+    const q = query(
+      col,
+      where("__name__", ">=", startKey),
+      where("__name__", "<=", todayKey),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const byKey = new Map<string, DailySummary>();
+      snap.forEach((d) => {
+        const data = d.data() as DailySummary;
+        byKey.set(d.id, { ...data, dayKey: d.id });
+      });
+      const out: DailySummary[] = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const k = dayKeyOf(d);
+        out.push(
+          byKey.get(k) ?? {
+            dayKey: k,
+            feeds: 0,
+            breast_feeds: 0,
+            bottle_feeds: 0,
+            pump_count: 0,
+            milkMl: 0,
+            pumpMl: 0,
+            diapers: 0,
+            wets: 0,
+            dirties: 0,
+            mixeds: 0,
+            meds: 0,
+            sleepMinutes: 0,
+            maxTempF: null,
+          },
+        );
+      }
+      setSummaries(out);
+      setLoading(false);
+    });
+    return unsub;
+  }, [hid, days, todayKey]);
+
+  return { summaries, loading };
+}
+
+export const SUMMARIES_FLAG_ENABLED = SUMMARIES_ENABLED;
+
 export async function fetchAllEvents(): Promise<BabyEvent[]> {
   const hid = requireHouseholdId();
   const q = query(
@@ -381,5 +723,179 @@ export async function updateEvent(
     updated_at: Timestamp.now(),
   };
   if (occurred_at) update.occurred_at = Timestamp.fromDate(occurred_at);
-  await updateDoc(eventDoc(hid, id), update);
+
+  if (!SUMMARIES_ENABLED) {
+    await updateDoc(eventDoc(hid, id), update);
+    return;
+  }
+  await updateEventWithSummary(hid, id, patch, update);
+}
+
+async function updateEventWithSummary(
+  hid: string,
+  id: string,
+  patch: Partial<NewEventPayload> & { occurred_at?: Date },
+  flatUpdate: Record<string, unknown>,
+): Promise<void> {
+  const ref = eventDoc(hid, id);
+
+  // Read the existing event up front (one read). For pure-counter and
+  // sleep_end cases we then build a writeBatch; temperature recomputes
+  // max via an additional query.
+  const existingSnap = await getDocs(
+    query(eventsCollection(hid), where("__name__", "==", id), limit(1)),
+  );
+  if (existingSnap.empty) {
+    // Fallback: just apply the update and skip summary side-effects.
+    await updateDoc(ref, flatUpdate);
+    return;
+  }
+  const old = existingSnap.docs[0]!.data() as Record<string, unknown> & {
+    type: string;
+    occurred_at: Timestamp;
+    deleted?: boolean;
+    sleep_minutes_by_day?: Record<string, number>;
+    temp_f?: number;
+    volume_ml?: number;
+  };
+  if (old.deleted) {
+    await updateDoc(ref, flatUpdate);
+    return;
+  }
+
+  const oldOccurredAt = old.occurred_at.toDate();
+  const newOccurredAt = patch.occurred_at ?? oldOccurredAt;
+  const newType = (patch.type ?? old.type) as string;
+
+  // Sleep_end edits: invert old minute map, recompute new window using the
+  // most recent open sleep_start, write new map onto the event.
+  if (newType === "sleep_end" && old.type === "sleep_end") {
+    const oldMap = old.sleep_minutes_by_day ?? {};
+    const recentQ = query(
+      eventsCollection(hid),
+      orderBy("occurred_at", "desc"),
+      limit(50),
+    );
+    const recent = await getDocs(recentQ);
+    let openStartAt: Date | null = null;
+    for (const d of recent.docs) {
+      if (d.id === id) continue;
+      const data = d.data() as { type: string; deleted?: boolean; occurred_at: Timestamp };
+      if (data.deleted) continue;
+      if (data.type === "sleep_end") break;
+      if (data.type === "sleep_start") {
+        openStartAt = data.occurred_at.toDate();
+        break;
+      }
+    }
+    const newMap: Record<string, number> =
+      openStartAt && newOccurredAt > openStartAt
+        ? splitSleepMinutes(openStartAt, newOccurredAt)
+        : {};
+    const batch = writeBatch(getDb());
+    for (const [dk, mins] of Object.entries(oldMap)) {
+      batch.set(
+        summaryDoc(hid, dk),
+        { dayKey: dk, sleepMinutes: increment(-mins), updated_at: Timestamp.now() },
+        { merge: true },
+      );
+    }
+    for (const [dk, mins] of Object.entries(newMap)) {
+      batch.set(
+        summaryDoc(hid, dk),
+        { dayKey: dk, sleepMinutes: increment(mins), updated_at: Timestamp.now() },
+        { merge: true },
+      );
+    }
+    batch.update(ref, { ...flatUpdate, sleep_minutes_by_day: newMap });
+    await batch.commit();
+    return;
+  }
+
+  // Temperature edits: recompute max for affected days from the day's
+  // temperature events. Touch both old day and new day if occurred_at
+  // moved across midnight.
+  if (newType === "temperature" || old.type === "temperature") {
+    const oldDayKey = dayKeyOf(oldOccurredAt);
+    const newDayKey = dayKeyOf(newOccurredAt);
+    // Apply the patch first (so the recompute query sees the updated row).
+    await updateDoc(ref, flatUpdate);
+    const daysToRecompute = oldDayKey === newDayKey ? [oldDayKey] : [oldDayKey, newDayKey];
+    const batch = writeBatch(getDb());
+    for (const dk of daysToRecompute) {
+      const dayStart = parseDayKey(dk);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const tempQ = query(
+        eventsCollection(hid),
+        where("type", "==", "temperature"),
+        where("occurred_at", ">=", Timestamp.fromDate(dayStart)),
+        where("occurred_at", "<", Timestamp.fromDate(dayEnd)),
+      );
+      const tempSnap = await getDocs(tempQ);
+      let max: number | null = null;
+      for (const d of tempSnap.docs) {
+        const td = d.data() as { temp_f?: number; deleted?: boolean };
+        if (td.deleted) continue;
+        if (typeof td.temp_f === "number") {
+          if (max === null || td.temp_f > max) max = td.temp_f;
+        }
+      }
+      batch.set(
+        summaryDoc(hid, dk),
+        { dayKey: dk, maxTempF: max, updated_at: Timestamp.now() },
+        { merge: true },
+      );
+    }
+    await batch.commit();
+    return;
+  }
+
+  // Pure-counter case: invert old delta on old day, apply new delta on
+  // new day. Same day collapses to (new - old) net.
+  const oldDelta = deltaForEvent({
+    type: old.type as never,
+    volume_ml: old.volume_ml,
+  });
+  const newVolumeMl =
+    "volume_ml" in patch && typeof patch.volume_ml === "number"
+      ? patch.volume_ml
+      : old.volume_ml;
+  const newDelta = deltaForEvent({
+    type: newType as never,
+    volume_ml: newVolumeMl,
+  });
+  const oldDayKey = dayKeyOf(oldOccurredAt);
+  const newDayKey = dayKeyOf(newOccurredAt);
+  const batch = writeBatch(getDb());
+  if (oldDelta) {
+    batch.set(
+      summaryDoc(hid, oldDayKey),
+      {
+        dayKey: oldDayKey,
+        ...deltaToIncrements(inverseDelta(oldDelta)),
+        updated_at: Timestamp.now(),
+      },
+      { merge: true },
+    );
+  }
+  if (newDelta) {
+    batch.set(
+      summaryDoc(hid, newDayKey),
+      {
+        dayKey: newDayKey,
+        ...deltaToIncrements(newDelta),
+        updated_at: Timestamp.now(),
+      },
+      { merge: true },
+    );
+  }
+  batch.update(ref, flatUpdate);
+  await batch.commit();
+}
+
+// "YYYY-MM-DD" → midnight Date in local time.
+function parseDayKey(dk: string): Date {
+  const [y, m, d] = dk.split("-").map((n) => parseInt(n, 10));
+  return new Date(y!, m! - 1, d!);
 }

@@ -54,6 +54,14 @@ service cloud.firestore {
       match /config/{docId} {
         allow read, write: if isHouseholdMember(hid);
       }
+
+      // Pre-aggregated daily rollups maintained by the dual-write path in
+      // lib/useEvents.ts. Source of truth is the events subcollection; if
+      // these get out of sync, scripts/backfill-summaries.ts can rebuild
+      // them. Both fields and writes are trusted from any household member.
+      match /daily_summaries/{dayKey} {
+        allow read, write: if isHouseholdMember(hid);
+      }
     }
 
     // -- Legacy top-level events (transition only) ------------------------

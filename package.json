@@ -9,6 +9,7 @@
     "test:rules": "firebase emulators:exec --only firestore \"tsx --test tests/firestore.rules.test.ts\"",
     "migrate:emulator": "cross-env FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_PROJECT_ID=babylog-ea6b2 tsx scripts/migrate-to-households.ts",
     "merge-mixed:emulator": "cross-env FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_PROJECT_ID=babylog-ea6b2 tsx scripts/merge-mixed-diapers.ts",
+    "backfill-summaries:emulator": "cross-env FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_PROJECT_ID=babylog-ea6b2 tsx scripts/backfill-summaries.ts",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
