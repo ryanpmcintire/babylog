@@ -250,7 +250,7 @@ export function ActionGrid({
     try {
       const when = effectiveOccurredAt ?? new Date();
       for (const p of payloads) {
-        await writeEvent(p, when);
+        await writeEvent(p, when, events);
       }
       const timeNote =
         backdate || timerStart !== null
@@ -281,7 +281,7 @@ export function ActionGrid({
     setFlash(null);
     try {
       const when = effectiveOccurredAt ?? new Date();
-      const id = await writeEvent(payload, when);
+      const id = await writeEvent(payload, when, events);
       setUndoInfo({ id, label });
       undoTimerRef.current = setTimeout(() => {
         setUndoInfo(null);
@@ -303,7 +303,7 @@ export function ActionGrid({
     clearUndoTimer();
     setUndoInfo(null);
     try {
-      await softDeleteEvent(id);
+      await softDeleteEvent(id, events);
       setFlash("Undone");
       setTimeout(() => setFlash(null), 1500);
     } catch (err) {

@@ -255,7 +255,7 @@ export function History({ events }: { events: BabyEvent[] }) {
                 return (
                   <SwipeableRow
                     key={rowKey(row, idx)}
-                    onDelete={() => deleteRow(row)}
+                    onDelete={() => deleteRow(row, events)}
                   >
                     {item}
                   </SwipeableRow>
@@ -287,13 +287,16 @@ function canUserDelete(row: HistoryRow, uid: string | undefined): boolean {
   return ageMs >= 0 && ageMs <= EDIT_WINDOW_MS;
 }
 
-async function deleteRow(row: HistoryRow): Promise<void> {
+async function deleteRow(
+  row: HistoryRow,
+  events: BabyEvent[],
+): Promise<void> {
   if (row.kind === "event") {
-    await softDeleteEvent(row.event.id);
+    await softDeleteEvent(row.event.id, events);
     return;
   }
-  await softDeleteEvent(row.startId);
-  if (row.endId) await softDeleteEvent(row.endId);
+  await softDeleteEvent(row.startId, events);
+  if (row.endId) await softDeleteEvent(row.endId, events);
 }
 
 function HistoryItem({

@@ -62,6 +62,13 @@ service cloud.firestore {
       match /daily_summaries/{dayKey} {
         allow read, write: if isHouseholdMember(hid);
       }
+
+      // Materialized view docs (home / insights / library). One read per
+      // screen. Maintained by the same dual-write path; rebuildable via
+      // scripts/backfill-views.ts.
+      match /views/{viewId} {
+        allow read, write: if isHouseholdMember(hid);
+      }
     }
 
     // -- Legacy top-level events (transition only) ------------------------

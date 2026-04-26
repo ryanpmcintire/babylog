@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRecentEvents } from "@/lib/useEvents";
+import {
+  useHomeView,
+  useRecentEvents,
+  VIEWS_FLAG_ENABLED,
+} from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
 import type { Side } from "@/lib/events";
 import { Dashboard, isCurrentlySleeping } from "./Dashboard";
@@ -44,7 +48,14 @@ function readStoredTab(): Tab {
 
 export function HomeClient() {
   const { events, loading, error, source } = useRecentEvents();
-  const sleeping = isCurrentlySleeping(events);
+  const { view: homeView } = useHomeView();
+  // When the home view is wired up, prefer its sleep state — it's the
+  // dual-write source of truth and it's already loaded as part of the
+  // single home doc read.
+  const sleeping =
+    VIEWS_FLAG_ENABLED && homeView
+      ? homeView.sleep_state.sleeping
+      : isCurrentlySleeping(events);
   const [backdateOpen, setBackdateOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [tonightMode, setTonightMode] = useBoolPref("tonightMode");
@@ -147,7 +158,7 @@ export function HomeClient() {
 
         {tab === "home" && (
           <>
-            <Dashboard events={events} />
+            <Dashboard events={events} homeView={homeView} />
             <TodayClock events={events} />
             <Divider />
             <ActionGrid

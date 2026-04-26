@@ -23,7 +23,11 @@ export function SleepControl({ events }: { events: BabyEvent[] }) {
     if (busy) return;
     setBusy(true);
     try {
-      await writeEvent({ type: sleeping ? "sleep_end" : "sleep_start" });
+      await writeEvent(
+        { type: sleeping ? "sleep_end" : "sleep_start" },
+        undefined,
+        events,
+      );
       setFlash(sleeping ? "Woke up" : "Sleep started");
       setTimeout(() => setFlash(null), 1800);
     } catch (err) {

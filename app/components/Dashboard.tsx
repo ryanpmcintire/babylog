@@ -195,7 +195,18 @@ function deriveState(events: BabyEvent[], now: Date): Derived {
   };
 }
 
-export function Dashboard({ events }: { events: BabyEvent[] }) {
+export function Dashboard({
+  events,
+  homeView,
+}: {
+  events: BabyEvent[];
+  homeView?: import("@/lib/views").HomeView | null;
+}) {
+  // homeView is consumed once we wire the dashboard fully off raw events.
+  // Currently it's accepted-but-unused so HomeClient can pass it through;
+  // a follow-up pass will read latest pointers / today / sleep_state from
+  // it and stop deriving them from `events`.
+  void homeView;
   const [now, setNow] = useState(() => Date.now());
   const funAgeMode = useFunAgeMode();
   const rhythmClass = rhythmClassFor(funAgeMode);

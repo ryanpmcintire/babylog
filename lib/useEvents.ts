@@ -28,6 +28,14 @@ import {
   type DailySummary,
   type SummaryDelta,
 } from "./summaries";
+import {
+  computeHomeView,
+  computeInsightsView,
+  computeLibraryView,
+  type HomeView,
+  type InsightsView,
+  type LibraryView,
+} from "./views";
 import type {
   BabyEvent,
   BreastFeedOutcome,
@@ -42,6 +50,14 @@ import type {
 // Vercel env after backfill is run against prod.
 const SUMMARIES_ENABLED =
   process.env.NEXT_PUBLIC_USE_SUMMARIES === "true";
+
+// Materialized per-screen view docs at households/{hid}/views/{home,insights,library}.
+// When enabled, every event write/edit/delete also rewrites the relevant
+// view docs, so the home page reads exactly one doc and the insights/library
+// tabs read one doc each. Default false so prod stays on the previous read
+// path until Vercel env is flipped.
+const VIEWS_ENABLED =
+  process.env.NEXT_PUBLIC_USE_VIEWS === "true";
 
 // Resolve the household id for a write operation. Throws if the signed-in
 // user has no mapping — should never happen in practice (allowlist gates
@@ -66,6 +82,67 @@ function eventDoc(hid: string, eventId: string) {
 
 function summaryDoc(hid: string, dayKey: string) {
   return doc(getDb(), "households", hid, "daily_summaries", dayKey);
+}
+
+function homeViewDoc(hid: string) {
+  return doc(getDb(), "households", hid, "views", "home");
+}
+
+function insightsViewDoc(hid: string) {
+  return doc(getDb(), "households", hid, "views", "insights");
+}
+
+function libraryViewDoc(hid: string) {
+  return doc(getDb(), "households", hid, "views", "library");
+}
+
+// Apply (insert | replace | delete) of one event to a newest-first events
+// array. Pure — used by the dual-write to project the array forward and
+// hand it to computeHomeView / computeInsightsView / computeLibraryView.
+function applyEventChange(
+  events: BabyEvent[],
+  change:
+    | { kind: "insert"; event: BabyEvent }
+    | { kind: "replace"; event: BabyEvent }
+    | { kind: "delete"; eventId: string },
+): BabyEvent[] {
+  if (change.kind === "delete") {
+    return events.filter((e) => e.id !== change.eventId);
+  }
+  const without = events.filter((e) => e.id !== change.event.id);
+  without.push(change.event);
+  without.sort(
+    (a, b) => b.occurred_at.toMillis() - a.occurred_at.toMillis(),
+  );
+  return without;
+}
+
+// Compute fresh view docs from the projected events array and stage them
+// onto an existing WriteBatch. Skips entirely when VIEWS_ENABLED is off
+// (cutover safety) or when no event-array context was provided by the
+// caller (rare write paths from places that don't have a live listener).
+function stageViewWrites(
+  batch: ReturnType<typeof writeBatch>,
+  hid: string,
+  projectedEvents: BabyEvent[] | null,
+): void {
+  if (!VIEWS_ENABLED || !projectedEvents) return;
+  const now = new Date();
+  const home = computeHomeView(projectedEvents, now);
+  const insights = computeInsightsView(projectedEvents, now);
+  const library = computeLibraryView(projectedEvents);
+  batch.set(homeViewDoc(hid), {
+    ...home,
+    updated_at: Timestamp.now(),
+  });
+  batch.set(insightsViewDoc(hid), {
+    ...insights,
+    updated_at: Timestamp.now(),
+  });
+  batch.set(libraryViewDoc(hid), {
+    ...library,
+    updated_at: Timestamp.now(),
+  });
 }
 
 // Convert a SummaryDelta into a Firestore update payload using
@@ -230,6 +307,7 @@ export type NewEventPayload =
 export async function writeEvent(
   payload: NewEventPayload,
   occurredAt?: Date,
+  currentEvents?: BabyEvent[],
 ): Promise<string> {
   const hid = requireHouseholdId();
   const auth = getFirebaseAuth();
@@ -249,10 +327,13 @@ export async function writeEvent(
     const ref = await addDoc(eventsCollection(hid), eventBase);
     return ref.id;
   }
-  return writeEventWithSummary(hid, eventBase, payload, now);
+  return writeEventWithSummary(hid, eventBase, payload, now, currentEvents);
 }
 
-export async function softDeleteEvent(id: string): Promise<void> {
+export async function softDeleteEvent(
+  id: string,
+  currentEvents?: BabyEvent[],
+): Promise<void> {
   const hid = requireHouseholdId();
   if (!SUMMARIES_ENABLED) {
     await updateDoc(eventDoc(hid, id), {
@@ -261,7 +342,7 @@ export async function softDeleteEvent(id: string): Promise<void> {
     });
     return;
   }
-  await deleteEventWithSummary(hid, id);
+  await deleteEventWithSummary(hid, id, currentEvents);
 }
 
 // ---- Dual-write internals (only reached when SUMMARIES_ENABLED) ----
@@ -271,13 +352,20 @@ async function writeEventWithSummary(
   eventBase: Record<string, unknown>,
   payload: NewEventPayload,
   occurredAt: Date,
+  currentEvents?: BabyEvent[],
 ): Promise<string> {
   const newRef = doc(eventsCollection(hid));
 
   // Sleep_end: needs a transaction to find the matching open sleep_start
   // and split the resulting window across day boundaries.
   if (payload.type === "sleep_end") {
-    return writeSleepEndWithSummary(hid, newRef, eventBase, occurredAt);
+    return writeSleepEndWithSummary(
+      hid,
+      newRef,
+      eventBase,
+      occurredAt,
+      currentEvents,
+    );
   }
 
   // Temperature: needs a transaction to read current max and compare.
@@ -288,6 +376,7 @@ async function writeEventWithSummary(
       eventBase,
       payload,
       occurredAt,
+      currentEvents,
     );
   }
 
@@ -304,6 +393,13 @@ async function writeEventWithSummary(
       { merge: true },
     );
   }
+  if (VIEWS_ENABLED && currentEvents) {
+    const projected = applyEventChange(currentEvents, {
+      kind: "insert",
+      event: { ...(eventBase as object), id: newRef.id } as BabyEvent,
+    });
+    stageViewWrites(batch, hid, projected);
+  }
   await batch.commit();
   return newRef.id;
 }
@@ -313,6 +409,7 @@ async function writeSleepEndWithSummary(
   newRef: ReturnType<typeof doc>,
   eventBase: Record<string, unknown>,
   occurredAt: Date,
+  currentEvents?: BabyEvent[],
 ): Promise<string> {
   // Find the matching open sleep_start: most recent sleep_start with no
   // sleep_end after it. Read just enough recent events to pair them.
@@ -351,10 +448,18 @@ async function writeSleepEndWithSummary(
       );
     }
   }
-  batch.set(newRef, {
+  const sleepEndEventDoc = {
     ...eventBase,
     sleep_minutes_by_day: minutesByDay,
-  });
+  };
+  batch.set(newRef, sleepEndEventDoc);
+  if (VIEWS_ENABLED && currentEvents) {
+    const projected = applyEventChange(currentEvents, {
+      kind: "insert",
+      event: { ...sleepEndEventDoc, id: newRef.id } as unknown as BabyEvent,
+    });
+    stageViewWrites(batch, hid, projected);
+  }
   await batch.commit();
   return newRef.id;
 }
@@ -365,6 +470,7 @@ async function writeTemperatureWithSummary(
   eventBase: Record<string, unknown>,
   payload: Extract<NewEventPayload, { type: "temperature" }>,
   occurredAt: Date,
+  currentEvents?: BabyEvent[],
 ): Promise<string> {
   const dayKey = dayKeyOf(occurredAt);
   const ref = summaryDoc(hid, dayKey);
@@ -381,6 +487,25 @@ async function writeTemperatureWithSummary(
       { merge: true },
     );
     tx.set(newRef, eventBase);
+    if (VIEWS_ENABLED && currentEvents) {
+      const projected = applyEventChange(currentEvents, {
+        kind: "insert",
+        event: { ...eventBase, id: newRef.id } as BabyEvent,
+      });
+      const now = new Date();
+      tx.set(homeViewDoc(hid), {
+        ...computeHomeView(projected, now),
+        updated_at: Timestamp.now(),
+      });
+      tx.set(insightsViewDoc(hid), {
+        ...computeInsightsView(projected, now),
+        updated_at: Timestamp.now(),
+      });
+      tx.set(libraryViewDoc(hid), {
+        ...computeLibraryView(projected),
+        updated_at: Timestamp.now(),
+      });
+    }
   });
   return newRef.id;
 }
@@ -388,6 +513,7 @@ async function writeTemperatureWithSummary(
 async function deleteEventWithSummary(
   hid: string,
   id: string,
+  currentEvents?: BabyEvent[],
 ): Promise<void> {
   const ref = eventDoc(hid, id);
   const snap = await getDocs(
@@ -430,6 +556,13 @@ async function deleteEventWithSummary(
       );
     }
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
+    if (VIEWS_ENABLED && currentEvents) {
+      const projected = applyEventChange(currentEvents, {
+        kind: "delete",
+        eventId: id,
+      });
+      stageViewWrites(batch, hid, projected);
+    }
     await batch.commit();
     return;
   }
@@ -467,6 +600,13 @@ async function deleteEventWithSummary(
       { merge: true },
     );
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
+    if (VIEWS_ENABLED && currentEvents) {
+      const projected = applyEventChange(currentEvents, {
+        kind: "delete",
+        eventId: id,
+      });
+      stageViewWrites(batch, hid, projected);
+    }
     await batch.commit();
     return;
   }
@@ -489,6 +629,13 @@ async function deleteEventWithSummary(
     );
   }
   batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
+  if (VIEWS_ENABLED && currentEvents) {
+    const projected = applyEventChange(currentEvents, {
+      kind: "delete",
+      eventId: id,
+    });
+    stageViewWrites(batch, hid, projected);
+  }
   await batch.commit();
 }
 
@@ -696,6 +843,94 @@ export function useDailySummariesRange(
 }
 
 export const SUMMARIES_FLAG_ENABLED = SUMMARIES_ENABLED;
+export const VIEWS_FLAG_ENABLED = VIEWS_ENABLED;
+
+// Live listener on the home view doc. Returns null until the first snapshot.
+// One Firestore read per cold cache attach (or 0 with a valid resume token);
+// one read per real-time change. The whole home page renders from this.
+export function useHomeView(): {
+  view: HomeView | null;
+  loading: boolean;
+} {
+  const hid = useHouseholdId();
+  const [view, setView] = useState<HomeView | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!VIEWS_ENABLED || !hid) {
+      setLoading(false);
+      return;
+    }
+    const ref = homeViewDoc(hid);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        setView(snap.data() as HomeView);
+      } else {
+        setView(null);
+      }
+      setLoading(false);
+    });
+    return unsub;
+  }, [hid]);
+
+  return { view, loading };
+}
+
+export function useInsightsView(): {
+  view: InsightsView | null;
+  loading: boolean;
+} {
+  const hid = useHouseholdId();
+  const [view, setView] = useState<InsightsView | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!VIEWS_ENABLED || !hid) {
+      setLoading(false);
+      return;
+    }
+    const ref = insightsViewDoc(hid);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        setView(snap.data() as InsightsView);
+      } else {
+        setView(null);
+      }
+      setLoading(false);
+    });
+    return unsub;
+  }, [hid]);
+
+  return { view, loading };
+}
+
+export function useLibraryView(): {
+  view: LibraryView | null;
+  loading: boolean;
+} {
+  const hid = useHouseholdId();
+  const [view, setView] = useState<LibraryView | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!VIEWS_ENABLED || !hid) {
+      setLoading(false);
+      return;
+    }
+    const ref = libraryViewDoc(hid);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (snap.exists()) {
+        setView(snap.data() as LibraryView);
+      } else {
+        setView(null);
+      }
+      setLoading(false);
+    });
+    return unsub;
+  }, [hid]);
+
+  return { view, loading };
+}
 
 export async function fetchAllEvents(): Promise<BabyEvent[]> {
   const hid = requireHouseholdId();
@@ -715,6 +950,7 @@ export async function fetchAllEvents(): Promise<BabyEvent[]> {
 export async function updateEvent(
   id: string,
   patch: Partial<NewEventPayload> & { occurred_at?: Date },
+  currentEvents?: BabyEvent[],
 ): Promise<void> {
   const hid = requireHouseholdId();
   const { occurred_at, ...rest } = patch;
@@ -728,7 +964,7 @@ export async function updateEvent(
     await updateDoc(eventDoc(hid, id), update);
     return;
   }
-  await updateEventWithSummary(hid, id, patch, update);
+  await updateEventWithSummary(hid, id, patch, update, currentEvents);
 }
 
 async function updateEventWithSummary(
@@ -736,6 +972,7 @@ async function updateEventWithSummary(
   id: string,
   patch: Partial<NewEventPayload> & { occurred_at?: Date },
   flatUpdate: Record<string, unknown>,
+  currentEvents?: BabyEvent[],
 ): Promise<void> {
   const ref = eventDoc(hid, id);
 
@@ -808,6 +1045,16 @@ async function updateEventWithSummary(
       );
     }
     batch.update(ref, { ...flatUpdate, sleep_minutes_by_day: newMap });
+    if (VIEWS_ENABLED && currentEvents) {
+      const updated = projectUpdatedEvent(old, id, flatUpdate, {
+        sleep_minutes_by_day: newMap,
+      });
+      const projected = applyEventChange(currentEvents, {
+        kind: "replace",
+        event: updated,
+      });
+      stageViewWrites(batch, hid, projected);
+    }
     await batch.commit();
     return;
   }
@@ -846,6 +1093,14 @@ async function updateEventWithSummary(
         { dayKey: dk, maxTempF: max, updated_at: Timestamp.now() },
         { merge: true },
       );
+    }
+    if (VIEWS_ENABLED && currentEvents) {
+      const updated = projectUpdatedEvent(old, id, flatUpdate);
+      const projected = applyEventChange(currentEvents, {
+        kind: "replace",
+        event: updated,
+      });
+      stageViewWrites(batch, hid, projected);
     }
     await batch.commit();
     return;
@@ -891,6 +1146,14 @@ async function updateEventWithSummary(
     );
   }
   batch.update(ref, flatUpdate);
+  if (VIEWS_ENABLED && currentEvents) {
+    const updated = projectUpdatedEvent(old, id, flatUpdate);
+    const projected = applyEventChange(currentEvents, {
+      kind: "replace",
+      event: updated,
+    });
+    stageViewWrites(batch, hid, projected);
+  }
   await batch.commit();
 }
 
@@ -898,4 +1161,22 @@ async function updateEventWithSummary(
 function parseDayKey(dk: string): Date {
   const [y, m, d] = dk.split("-").map((n) => parseInt(n, 10));
   return new Date(y!, m! - 1, d!);
+}
+
+// Apply a flat field update to an existing event doc (admin-shape data
+// loaded from Firestore) and return a BabyEvent-shaped object suitable for
+// passing to the view compute functions. flatUpdate may contain Timestamps
+// (occurred_at) or scalars; we copy them across without conversion.
+function projectUpdatedEvent(
+  old: Record<string, unknown> & { occurred_at: Timestamp; type: string },
+  id: string,
+  flatUpdate: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): BabyEvent {
+  return {
+    ...(old as object),
+    ...flatUpdate,
+    ...extra,
+    id,
+  } as BabyEvent;
 }
