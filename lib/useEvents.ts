@@ -5,6 +5,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   getDocs,
   increment,
   limit,
@@ -117,20 +118,41 @@ function applyEventChange(
   return without;
 }
 
-// Compute fresh view docs from the projected events array and stage them
-// onto an existing WriteBatch. Skips entirely when VIEWS_ENABLED is off
-// (cutover safety) or when no event-array context was provided by the
-// caller (rare write paths from places that don't have a live listener).
-function stageViewWrites(
+// Compute fresh view docs from the union of (the current home view's
+// recent_events array, the live listener's events array, and the new
+// change) and stage the result onto an existing WriteBatch.
+//
+// Reading the current view doc first is what makes consecutive writes in
+// the same session safe: each write's projection includes events that
+// previous writes (a few hundred ms ago) added but haven't yet propagated
+// through the snapshot listener.
+//
+// Skips entirely when VIEWS_ENABLED is off, or when the caller didn't
+// provide a live-listener events array.
+async function stageViewWrites(
   batch: ReturnType<typeof writeBatch>,
   hid: string,
-  projectedEvents: BabyEvent[] | null,
-): void {
-  if (!VIEWS_ENABLED || !projectedEvents) return;
+  currentEvents: BabyEvent[] | null,
+  change:
+    | { kind: "insert"; event: BabyEvent }
+    | { kind: "replace"; event: BabyEvent }
+    | { kind: "delete"; eventId: string },
+): Promise<void> {
+  if (!VIEWS_ENABLED || !currentEvents) return;
+  const homeSnap = await getDoc(homeViewDoc(hid));
+  const existing: BabyEvent[] = homeSnap.exists()
+    ? ((homeSnap.data() as HomeView).recent_events ?? [])
+    : [];
+  const byId = new Map<string, BabyEvent>();
+  for (const e of existing) byId.set(e.id, e);
+  // Listener events override view events (more recent metadata).
+  for (const e of currentEvents) byId.set(e.id, e);
+  const projected = applyEventChange(Array.from(byId.values()), change);
+
   const now = new Date();
-  const home = computeHomeView(projectedEvents, now);
-  const insights = computeInsightsView(projectedEvents, now);
-  const library = computeLibraryView(projectedEvents);
+  const home = computeHomeView(projected, now);
+  const insights = computeInsightsView(projected, now);
+  const library = computeLibraryView(projected);
   batch.set(homeViewDoc(hid), {
     ...home,
     updated_at: Timestamp.now(),
@@ -395,11 +417,10 @@ async function writeEventWithSummary(
     );
   }
   if (VIEWS_ENABLED && currentEvents) {
-    const projected = applyEventChange(currentEvents, {
+    await stageViewWrites(batch, hid, currentEvents, {
       kind: "insert",
       event: { ...(eventBase as object), id: newRef.id } as BabyEvent,
     });
-    stageViewWrites(batch, hid, projected);
   }
   await batch.commit();
   return newRef.id;
@@ -455,11 +476,10 @@ async function writeSleepEndWithSummary(
   };
   batch.set(newRef, sleepEndEventDoc);
   if (VIEWS_ENABLED && currentEvents) {
-    const projected = applyEventChange(currentEvents, {
+    await stageViewWrites(batch, hid, currentEvents, {
       kind: "insert",
       event: { ...sleepEndEventDoc, id: newRef.id } as unknown as BabyEvent,
     });
-    stageViewWrites(batch, hid, projected);
   }
   await batch.commit();
   return newRef.id;
@@ -476,7 +496,12 @@ async function writeTemperatureWithSummary(
   const dayKey = dayKeyOf(occurredAt);
   const ref = summaryDoc(hid, dayKey);
   await runTransaction(getDb(), async (tx) => {
+    // All reads must happen before all writes inside a transaction.
     const snap = await tx.get(ref);
+    const homeSnap =
+      VIEWS_ENABLED && currentEvents
+        ? await tx.get(homeViewDoc(hid))
+        : null;
     const cur = snap.exists() ? (snap.data() as { maxTempF?: number | null }) : null;
     const newMax =
       cur?.maxTempF == null || payload.temp_f > cur.maxTempF
@@ -488,8 +513,14 @@ async function writeTemperatureWithSummary(
       { merge: true },
     );
     tx.set(newRef, eventBase);
-    if (VIEWS_ENABLED && currentEvents) {
-      const projected = applyEventChange(currentEvents, {
+    if (VIEWS_ENABLED && currentEvents && homeSnap) {
+      const existing: BabyEvent[] = homeSnap.exists()
+        ? ((homeSnap.data() as HomeView).recent_events ?? [])
+        : [];
+      const byId = new Map<string, BabyEvent>();
+      for (const e of existing) byId.set(e.id, e);
+      for (const e of currentEvents) byId.set(e.id, e);
+      const projected = applyEventChange(Array.from(byId.values()), {
         kind: "insert",
         event: { ...eventBase, id: newRef.id } as BabyEvent,
       });
@@ -558,11 +589,10 @@ async function deleteEventWithSummary(
     }
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
     if (VIEWS_ENABLED && currentEvents) {
-      const projected = applyEventChange(currentEvents, {
+      await stageViewWrites(batch, hid, currentEvents, {
         kind: "delete",
         eventId: id,
       });
-      stageViewWrites(batch, hid, projected);
     }
     await batch.commit();
     return;
@@ -602,11 +632,10 @@ async function deleteEventWithSummary(
     );
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
     if (VIEWS_ENABLED && currentEvents) {
-      const projected = applyEventChange(currentEvents, {
+      await stageViewWrites(batch, hid, currentEvents, {
         kind: "delete",
         eventId: id,
       });
-      stageViewWrites(batch, hid, projected);
     }
     await batch.commit();
     return;
@@ -631,11 +660,10 @@ async function deleteEventWithSummary(
   }
   batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
   if (VIEWS_ENABLED && currentEvents) {
-    const projected = applyEventChange(currentEvents, {
+    await stageViewWrites(batch, hid, currentEvents, {
       kind: "delete",
       eventId: id,
     });
-    stageViewWrites(batch, hid, projected);
   }
   await batch.commit();
 }
@@ -1073,11 +1101,10 @@ async function updateEventWithSummary(
       const updated = projectUpdatedEvent(old, id, flatUpdate, {
         sleep_minutes_by_day: newMap,
       });
-      const projected = applyEventChange(currentEvents, {
+      await stageViewWrites(batch, hid, currentEvents, {
         kind: "replace",
         event: updated,
       });
-      stageViewWrites(batch, hid, projected);
     }
     await batch.commit();
     return;
@@ -1120,11 +1147,10 @@ async function updateEventWithSummary(
     }
     if (VIEWS_ENABLED && currentEvents) {
       const updated = projectUpdatedEvent(old, id, flatUpdate);
-      const projected = applyEventChange(currentEvents, {
+      await stageViewWrites(batch, hid, currentEvents, {
         kind: "replace",
         event: updated,
       });
-      stageViewWrites(batch, hid, projected);
     }
     await batch.commit();
     return;
@@ -1172,11 +1198,10 @@ async function updateEventWithSummary(
   batch.update(ref, flatUpdate);
   if (VIEWS_ENABLED && currentEvents) {
     const updated = projectUpdatedEvent(old, id, flatUpdate);
-    const projected = applyEventChange(currentEvents, {
+    await stageViewWrites(batch, hid, currentEvents, {
       kind: "replace",
       event: updated,
     });
-    stageViewWrites(batch, hid, projected);
   }
   await batch.commit();
 }
