@@ -17,10 +17,12 @@ import type {
 import {
   buildDailyBuckets,
   buildMarkers,
+  buildSleepSegments,
   currentSleepState,
   explicitSleepWindows,
   inferredSleepWindows,
   type Marker,
+  type SleepSegment,
 } from "./aggregates";
 import {
   dayKeyOf,
@@ -181,6 +183,10 @@ export type InsightsView = {
   daily_summaries: DailySummary[];
   // Marker data for Timeline within the same window. Bounded.
   markers: Marker[];
+  // Sleep segments for Timeline within the same window. One entry per
+  // sleep window (split at midnight). Lets Timeline render without
+  // pulling raw events.
+  sleep_segments: SleepSegment[];
   // All weight readings, oldest-first.
   weights: { at: number; eventId: string; weight_grams: number; notes?: string }[];
 };
@@ -377,7 +383,13 @@ export function computeInsightsView(
       };
     });
 
-  return { daily_summaries, markers, weights };
+  // Sleep segments for the same window. buildSleepSegments returns per-day
+  // entries already split at midnight; filter to the insights window.
+  const allSegments = buildSleepSegments(live, now, { inferBufferMin: 10 });
+  const windowDayKeys = new Set(daily_summaries.map((d) => d.dayKey));
+  const sleep_segments = allSegments.filter((s) => windowDayKeys.has(s.dayKey));
+
+  return { daily_summaries, markers, sleep_segments, weights };
 }
 
 export function computeLibraryView(events: BabyEvent[]): LibraryView {

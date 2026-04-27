@@ -10,7 +10,7 @@ import {
   type Marker,
   type SleepSegment,
 } from "@/lib/aggregates";
-import { useExtendedEvents } from "@/lib/useEvents";
+import { useExtendedEvents, VIEWS_FLAG_ENABLED } from "@/lib/useEvents";
 import { EditEventSheet } from "./EditEventSheet";
 
 const AXIS_TICKS = [0, 6, 12, 18, 24];
@@ -44,14 +44,17 @@ export function Timeline({
   events: BabyEvent[];
   insightsView?: import("@/lib/views").InsightsView | null;
 }) {
-  // insightsView wired for follow-up: timeline markers can switch to it
-  // (see InsightsView.markers) once the editing flow stops needing the
-  // full event list. For now the prop is accepted but unused.
-  void insightsView;
+  const useView = VIEWS_FLAG_ENABLED && insightsView != null;
   const [days, setDays] = useState(7);
   const [tick, setTick] = useState(() => Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);
-  const { events, loadingMore } = useExtendedEvents(liveEvents, days);
+  // When views are on, the markers + sleep segments come from insightsView
+  // (already loaded as part of the single insights doc read). Skip the
+  // useExtendedEvents fetch entirely — that was the next-biggest read leak
+  // after eliminating useRecentEvents.
+  const extended = useExtendedEvents(useView ? [] : liveEvents, useView ? 0 : days);
+  const events = useView ? liveEvents : extended.events;
+  const loadingMore = useView ? false : extended.loadingMore;
   const editingEvent = editingId
     ? events.find((e) => e.id === editingId) ?? null
     : null;
@@ -78,10 +81,20 @@ export function Timeline({
   }, [days, events.length]);
 
   const { sleepByDay, markersByDay } = useMemo(() => {
-    const sleeps = buildSleepSegments(events, now, { inferBufferMin: 10 });
-    // Pumps are parent events, not baby events — omit from the timeline to
-    // reduce marker density. They're still visible in Trends / History.
-    const markers = buildMarkers(events).filter((m) => m.kind !== "pump");
+    let sleeps: SleepSegment[];
+    let markers: Marker[];
+    if (useView && insightsView) {
+      const dayKeys = new Set(dayList.map((d) => d.key));
+      sleeps = (insightsView.sleep_segments ?? []).filter((s) =>
+        dayKeys.has(s.dayKey),
+      );
+      markers = (insightsView.markers ?? [])
+        .filter((m) => m.kind !== "pump")
+        .filter((m) => dayKeys.has(m.dayKey));
+    } else {
+      sleeps = buildSleepSegments(events, now, { inferBufferMin: 10 });
+      markers = buildMarkers(events).filter((m) => m.kind !== "pump");
+    }
     const sMap = new Map<string, SleepSegment[]>();
     const mMap = new Map<string, Marker[]>();
     for (const s of sleeps) {
@@ -96,9 +109,15 @@ export function Timeline({
     }
     return { sleepByDay: sMap, markersByDay: mMap };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events]);
+  }, [useView, insightsView, events, dayList]);
 
-  if (events.length === 0) return null;
+  if (!useView && events.length === 0) return null;
+  if (
+    useView &&
+    (insightsView?.markers?.length ?? 0) === 0 &&
+    (insightsView?.sleep_segments?.length ?? 0) === 0
+  )
+    return null;
 
   return (
     <div className="w-full rounded-3xl border border-accent-soft bg-surface p-4 shadow-sm">
