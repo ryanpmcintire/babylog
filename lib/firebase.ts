@@ -31,6 +31,22 @@ const firebaseConfig = {
 let app: FirebaseApp | null = null;
 let authInstance: Auth | null = null;
 let dbInstance: Firestore | null = null;
+let testDbOverride: Firestore | null = null;
+let testAuthOverride: Auth | null = null;
+
+// Test-only hook: integration tests inject a Firestore instance bound to
+// the emulator (via @firebase/rules-unit-testing) and a fake Auth whose
+// currentUser matches the test's authentication context. With these set,
+// getDb() and getFirebaseAuth() return the test instances instead of
+// instantiating real ones, so writeEvent / updateEvent / softDeleteEvent
+// run unmodified against the emulator.
+export function __setTestFirebase(
+  db: Firestore | null,
+  auth: Auth | null,
+): void {
+  testDbOverride = db;
+  testAuthOverride = auth;
+}
 
 function getApp(): FirebaseApp {
   if (app) return app;
@@ -39,6 +55,7 @@ function getApp(): FirebaseApp {
 }
 
 export function getFirebaseAuth(): Auth {
+  if (testAuthOverride) return testAuthOverride;
   if (authInstance) return authInstance;
   authInstance = getAuth(getApp());
   if (useEmulator && typeof window !== "undefined") {
@@ -57,6 +74,7 @@ export function getFirebaseAuth(): Auth {
 }
 
 export function getDb(): Firestore {
+  if (testDbOverride) return testDbOverride;
   if (dbInstance) return dbInstance;
   try {
     dbInstance = initializeFirestore(getApp(), {
