@@ -228,6 +228,13 @@ export function useRecentEvents(
 
   useEffect(() => {
     if (!hid) return;
+    // Caller can pass maxCount=0 to opt out of attaching the listener
+    // entirely — used when the events array is sourced from a view doc
+    // instead.
+    if (maxCount <= 0) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     let triedLegacyFallback = false;
     const q = query(

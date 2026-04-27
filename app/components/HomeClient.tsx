@@ -10,7 +10,7 @@ import {
   VIEWS_FLAG_ENABLED,
 } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
-import type { Side } from "@/lib/events";
+import type { BabyEvent, Side } from "@/lib/events";
 import { Dashboard, isCurrentlySleeping } from "./Dashboard";
 import { TodayClock } from "./TodayClock";
 import { ActionGrid } from "./ActionGrid";
@@ -49,17 +49,23 @@ function readStoredTab(): Tab {
 }
 
 export function HomeClient() {
-  const { events, loading, error, source } = useRecentEvents();
-  const { view: homeView } = useHomeView();
+  const { view: homeView, loading: homeLoading } = useHomeView();
   const { view: insightsView } = useInsightsView();
   const { view: libraryView } = useLibraryView();
-  // When the home view is wired up, prefer its sleep state — it's the
-  // dual-write source of truth and it's already loaded as part of the
-  // single home doc read.
-  const sleeping =
-    VIEWS_FLAG_ENABLED && homeView
-      ? homeView.sleep_state.sleeping
-      : isCurrentlySleeping(events);
+  // When views are on, derive events from the home view doc's embedded
+  // recent_events (50 newest) instead of attaching a separate listener
+  // on the events collection. Cuts cold-cache page-open cost from
+  // ~200 doc reads to 1.
+  const fallback = useRecentEvents(VIEWS_FLAG_ENABLED ? 0 : 200);
+  const events: BabyEvent[] = VIEWS_FLAG_ENABLED
+    ? (homeView?.recent_events ?? [])
+    : fallback.events;
+  const loading = VIEWS_FLAG_ENABLED ? homeLoading : fallback.loading;
+  const error = VIEWS_FLAG_ENABLED ? null : fallback.error;
+  const source = VIEWS_FLAG_ENABLED ? "new" : fallback.source;
+  const sleeping = homeView
+    ? homeView.sleep_state.sleeping
+    : isCurrentlySleeping(events);
   const [backdateOpen, setBackdateOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [tonightMode, setTonightMode] = useBoolPref("tonightMode");
