@@ -598,6 +598,179 @@ export function applyChangeToLibraryView(
   return existing;
 }
 
+// Apply a change to the InsightsView incrementally. Preserves existing
+// fields (markers/weights/sleep_segments/daily_summaries from outside
+// the affected window) — does NOT recompute from a limited events array,
+// which would clobber data older than the events the dual-write has
+// access to.
+//
+// Inputs:
+//   existing: current InsightsView (loaded by stageViewWrites)
+//   change: insert / replace / delete
+//   projected: the projected events array (recent_events + currentEvents
+//     + change) — used to recompute sleep_segments for the day(s) the
+//     change actually touches, since inferred sleep depends on
+//     neighboring events.
+//   now: clock for the current write
+export function applyChangeToInsightsView(
+  existing: InsightsView,
+  change: ViewChange,
+  projected: BabyEvent[],
+  now: Date,
+): InsightsView {
+  // Initialize fields defensively — older view docs may pre-date a field.
+  let daily_summaries = existing.daily_summaries ?? [];
+  let markers = existing.markers ?? [];
+  let weights = existing.weights ?? [];
+  let sleep_segments = existing.sleep_segments ?? [];
+
+  // ---- markers ----
+  if (change.kind === "delete" || change.kind === "replace") {
+    const removeId =
+      change.kind === "delete" ? change.eventId : change.event.id;
+    markers = markers.filter((m) => m.eventId !== removeId);
+  }
+  if (change.kind !== "delete") {
+    const e = change.event;
+    const at = e.occurred_at.toMillis();
+    const dayKey = dayKeyOf(e.occurred_at.toDate());
+    const atMin =
+      e.occurred_at.toDate().getHours() * 60 +
+      e.occurred_at.toDate().getMinutes();
+    let kind: Marker["kind"] | null = null;
+    if (e.type === "breast_feed") kind = "breast";
+    else if (e.type === "bottle_feed") kind = "bottle";
+    else if (e.type === "pump") kind = "pump";
+    else if (e.type === "diaper_wet") kind = "diaper_wet";
+    else if (e.type === "diaper_dirty") kind = "diaper_dirty";
+    else if (e.type === "diaper_mixed") kind = "diaper_mixed";
+    else if (e.type === "medication") kind = "medication";
+    else if (e.type === "temperature") kind = "temperature";
+    if (kind) {
+      const marker: Marker = { dayKey, atMin, kind, eventId: e.id };
+      if (e.type === "temperature") marker.tempF = e.temp_f;
+      markers = [...markers, marker];
+    }
+    void at;
+  }
+
+  // ---- weights ----
+  if (change.kind === "delete" || change.kind === "replace") {
+    const removeId =
+      change.kind === "delete" ? change.eventId : change.event.id;
+    weights = weights.filter((w) => w.eventId !== removeId);
+  }
+  if (change.kind !== "delete" && change.event.type === "weight") {
+    const w = change.event;
+    weights = [
+      ...weights,
+      {
+        at: w.occurred_at.toMillis(),
+        eventId: w.id,
+        weight_grams: w.weight_grams,
+        ...(w.notes !== undefined ? { notes: w.notes } : {}),
+      },
+    ];
+    weights.sort((a, b) => a.at - b.at);
+    if (weights.length > WEIGHTS_LIMIT) weights = weights.slice(-WEIGHTS_LIMIT);
+  }
+
+  // ---- sleep_segments ----
+  // Recompute only for the day of the change and the day before/after
+  // (sleep windows can span midnight). Preserve segments for all other
+  // days from existing — those are correct and shouldn't be touched.
+  const touchedDays = new Set<string>();
+  const eventDate =
+    change.kind === "delete" ? null : change.event.occurred_at.toDate();
+  if (eventDate) {
+    const sameDay = new Date(eventDate);
+    sameDay.setHours(0, 0, 0, 0);
+    const prevDay = new Date(sameDay);
+    prevDay.setDate(prevDay.getDate() - 1);
+    const nextDay = new Date(sameDay);
+    nextDay.setDate(nextDay.getDate() + 1);
+    touchedDays.add(dayKeyOf(prevDay));
+    touchedDays.add(dayKeyOf(sameDay));
+    touchedDays.add(dayKeyOf(nextDay));
+  }
+  if (touchedDays.size > 0) {
+    const live = projected.filter((e) => !e.deleted);
+    const recomputedAll = buildSleepSegments(live, now, { inferBufferMin: 10 });
+    const recomputedTouched = recomputedAll.filter((s) =>
+      touchedDays.has(s.dayKey),
+    );
+    sleep_segments = [
+      ...sleep_segments.filter((s) => !touchedDays.has(s.dayKey)),
+      ...recomputedTouched,
+    ];
+  }
+
+  // ---- daily_summaries ----
+  // Apply the numeric delta to the affected day's entry. Temperature is
+  // not invertible — for delete/replace of a temp event we leave maxTempF
+  // alone (drift heals via backfill).
+  if (change.kind === "delete" || change.kind === "replace") {
+    // We don't have the old event's data here for a clean inverse; the
+    // daily_summaries collection is the source of truth and gets the
+    // correct delta applied separately. For InsightsView, just leave
+    // daily_summaries alone on delete/replace and let the next backfill
+    // sync. (Common case is insert which we handle below.)
+  }
+  if (change.kind === "insert") {
+    const e = change.event;
+    const dk = dayKeyOf(e.occurred_at.toDate());
+    const idx = daily_summaries.findIndex((d) => d.dayKey === dk);
+    if (idx !== -1) {
+      const cur = daily_summaries[idx]!;
+      const updated: DailySummary = { ...cur };
+      switch (e.type) {
+        case "breast_feed":
+          updated.feeds += 1;
+          updated.breast_feeds += 1;
+          break;
+        case "bottle_feed":
+          updated.feeds += 1;
+          updated.bottle_feeds += 1;
+          updated.milkMl += e.volume_ml;
+          break;
+        case "pump":
+          updated.pump_count += 1;
+          updated.pumpMl += e.volume_ml;
+          break;
+        case "diaper_wet":
+          updated.diapers += 1;
+          updated.wets += 1;
+          break;
+        case "diaper_dirty":
+          updated.diapers += 1;
+          updated.dirties += 1;
+          break;
+        case "diaper_mixed":
+          updated.diapers += 1;
+          updated.mixeds += 1;
+          updated.wets += 1;
+          updated.dirties += 1;
+          break;
+        case "medication":
+          updated.meds += 1;
+          break;
+        case "temperature":
+          if (updated.maxTempF == null || e.temp_f > updated.maxTempF) {
+            updated.maxTempF = e.temp_f;
+          }
+          break;
+      }
+      daily_summaries = [
+        ...daily_summaries.slice(0, idx),
+        updated,
+        ...daily_summaries.slice(idx + 1),
+      ];
+    }
+  }
+
+  return { daily_summaries, markers, sleep_segments, weights };
+}
+
 // Latest pointers are sparse — Lily's last weight or last book might be
 // older than the recent_events_50 window. When we recompute HomeView
 // from a limited projected events list, computeLatest may produce null

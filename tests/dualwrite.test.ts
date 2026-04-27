@@ -248,6 +248,84 @@ test("REGRESSION: soft-delete removes from view", async () => {
   assert.strictEqual(view!.today.wets, 0);
 });
 
+test("REGRESSION: insightsView weights/markers/segments survive subsequent event writes", async () => {
+  // Reproduces the bug where dual-write recomputed insightsView from
+  // a 50-event projection — wiping weights, markers, and sleep segments
+  // older than that window on every event log. Backfill restored them
+  // briefly, then the next feed/diaper destroyed them again.
+  await env.withSecurityRulesDisabled(async (adminCtx) => {
+    const adb = adminCtx.firestore();
+    await setDoc(doc(adb, "households", HID, "views", "insights"), {
+      daily_summaries: [],
+      markers: [
+        { dayKey: "2026-04-01", atMin: 600, kind: "breast", eventId: "old-1" },
+        { dayKey: "2026-04-01", atMin: 720, kind: "bottle", eventId: "old-2" },
+      ],
+      sleep_segments: [
+        {
+          dayKey: "2026-04-01",
+          startMin: 1320,
+          endMin: 1440,
+          ongoing: false,
+          source: "explicit",
+        },
+      ],
+      weights: [
+        { at: Date.now() - 14 * 86400_000, eventId: "weight-old", weight_grams: 4200 },
+        { at: Date.now() - 7 * 86400_000, eventId: "weight-newer", weight_grams: 4500 },
+      ],
+    });
+  });
+
+  // A normal event write — historically clobbered the view.
+  await writeEvent({ type: "diaper_wet" }, new Date(), []);
+
+  const snap = await getDoc(doc(db, "households", HID, "views", "insights"));
+  const v = snap.data() as {
+    weights: { eventId: string }[];
+    markers: { eventId: string }[];
+    sleep_segments: { dayKey: string }[];
+  };
+  // Old weights still present
+  const weightIds = v.weights.map((w) => w.eventId).sort();
+  assert.deepStrictEqual(weightIds, ["weight-newer", "weight-old"]);
+  // Old markers still present
+  const oldMarkerIds = v.markers
+    .map((m) => m.eventId)
+    .filter((id) => id.startsWith("old-"))
+    .sort();
+  assert.deepStrictEqual(oldMarkerIds, ["old-1", "old-2"]);
+  // Old sleep segments still present (April 1 is outside the new event's
+  // touched-day window so it must not be recomputed).
+  const oldSegmentDays = v.sleep_segments
+    .map((s) => s.dayKey)
+    .filter((dk) => dk === "2026-04-01");
+  assert.strictEqual(oldSegmentDays.length, 1);
+});
+
+test("REGRESSION: weight write appends to insightsView.weights without losing prior", async () => {
+  // Seed an existing weight, then log a new one.
+  await env.withSecurityRulesDisabled(async (adminCtx) => {
+    const adb = adminCtx.firestore();
+    await setDoc(doc(adb, "households", HID, "views", "insights"), {
+      daily_summaries: [],
+      markers: [],
+      sleep_segments: [],
+      weights: [
+        { at: Date.now() - 7 * 86400_000, eventId: "weight-prior", weight_grams: 4500 },
+      ],
+    });
+  });
+
+  await writeEvent({ type: "weight", weight_grams: 5000 }, new Date(), []);
+
+  const snap = await getDoc(doc(db, "households", HID, "views", "insights"));
+  const v = snap.data() as { weights: { weight_grams: number }[] };
+  assert.strictEqual(v.weights.length, 2, "both weights must be present");
+  const grams = v.weights.map((w) => w.weight_grams).sort();
+  assert.deepStrictEqual(grams, [4500, 5000]);
+});
+
 test("REGRESSION: book write without currentEvents updates libraryView", async () => {
   // Reproduces the bug where Library tab's writeEvent calls don't pass
   // a currentEvents array (Library doesn't have a unified events list,

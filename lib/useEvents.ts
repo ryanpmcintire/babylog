@@ -30,6 +30,7 @@ import {
   type SummaryDelta,
 } from "./summaries";
 import {
+  applyChangeToInsightsView,
   applyChangeToLibraryView,
   computeHomeView,
   computeInsightsView,
@@ -144,13 +145,17 @@ async function stageViewWrites(
 ): Promise<void> {
   if (!VIEWS_ENABLED) return;
 
-  const [homeSnap, libSnap] = await Promise.all([
+  const [homeSnap, insightsSnap, libSnap] = await Promise.all([
     getDoc(homeViewDoc(hid)),
+    getDoc(insightsViewDoc(hid)),
     getDoc(libraryViewDoc(hid)),
   ]);
   const existingHome = homeSnap.exists()
     ? (homeSnap.data() as HomeView)
     : null;
+  const existingInsights: InsightsView = insightsSnap.exists()
+    ? (insightsSnap.data() as InsightsView)
+    : { daily_summaries: [], markers: [], sleep_segments: [], weights: [] };
   const existingLib: LibraryView = libSnap.exists()
     ? (libSnap.data() as LibraryView)
     : { books: [], foods: [] };
@@ -168,7 +173,16 @@ async function stageViewWrites(
   // existing view unless the change deletes/replaces that exact event.
   home.latest = preserveLatestPointers(home.latest, existingHome?.latest, change);
 
-  const insights = computeInsightsView(projected, now);
+  // Insights and Library views update incrementally — preserves data
+  // older than the 50-event window the dual-write has access to. Without
+  // this, every event write would clobber weights/markers/sleep_segments
+  // from days outside that window.
+  const insights = applyChangeToInsightsView(
+    existingInsights,
+    change,
+    projected,
+    now,
+  );
   const library = applyChangeToLibraryView(existingLib, change);
 
   batch.set(homeViewDoc(hid), { ...home, updated_at: Timestamp.now() });
@@ -521,6 +535,9 @@ async function writeTemperatureWithSummary(
     // All reads must happen before all writes inside a transaction.
     const snap = await tx.get(ref);
     const homeSnap = VIEWS_ENABLED ? await tx.get(homeViewDoc(hid)) : null;
+    const insightsSnap = VIEWS_ENABLED
+      ? await tx.get(insightsViewDoc(hid))
+      : null;
     const libSnap = VIEWS_ENABLED ? await tx.get(libraryViewDoc(hid)) : null;
     const cur = snap.exists() ? (snap.data() as { maxTempF?: number | null }) : null;
     const newMax =
@@ -533,10 +550,13 @@ async function writeTemperatureWithSummary(
       { merge: true },
     );
     tx.set(newRef, eventBase);
-    if (VIEWS_ENABLED && homeSnap && libSnap) {
+    if (VIEWS_ENABLED && homeSnap && insightsSnap && libSnap) {
       const existingHome = homeSnap.exists()
         ? (homeSnap.data() as HomeView)
         : null;
+      const existingInsights: InsightsView = insightsSnap.exists()
+        ? (insightsSnap.data() as InsightsView)
+        : { daily_summaries: [], markers: [], sleep_segments: [], weights: [] };
       const existingLib: LibraryView = libSnap.exists()
         ? (libSnap.data() as LibraryView)
         : { books: [], foods: [] };
@@ -558,7 +578,7 @@ async function writeTemperatureWithSummary(
       );
       tx.set(homeViewDoc(hid), { ...home, updated_at: Timestamp.now() });
       tx.set(insightsViewDoc(hid), {
-        ...computeInsightsView(projected, now),
+        ...applyChangeToInsightsView(existingInsights, change, projected, now),
         updated_at: Timestamp.now(),
       });
       tx.set(libraryViewDoc(hid), {
