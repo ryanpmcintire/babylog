@@ -216,6 +216,7 @@ export function HomeClient() {
         <BackdateSheet
           sleeping={sleeping}
           suggestedBreastSide={suggestedBreastSide}
+          events={events}
           onClose={() => setBackdateOpen(false)}
         />
       )}

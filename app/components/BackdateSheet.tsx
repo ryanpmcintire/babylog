@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Side } from "@/lib/events";
+import type { BabyEvent, Side } from "@/lib/events";
 import { ActionGrid } from "./ActionGrid";
 
 const QUICK_PRESETS_MIN = [10, 30, 60, 120, 240];
@@ -14,10 +14,12 @@ function toLocalInput(d: Date): string {
 export function BackdateSheet({
   sleeping,
   suggestedBreastSide,
+  events,
   onClose,
 }: {
   sleeping: boolean;
   suggestedBreastSide?: Side;
+  events?: BabyEvent[];
   onClose: () => void;
 }) {
   const [selectedMinutesAgo, setSelectedMinutesAgo] = useState<number | null>(
@@ -115,6 +117,7 @@ export function BackdateSheet({
             occurredAt={occurredAt}
             backdate
             suggestedBreastSide={suggestedBreastSide}
+            events={events}
           />
         </div>
       </div>
