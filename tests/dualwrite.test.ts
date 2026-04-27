@@ -248,6 +248,79 @@ test("REGRESSION: soft-delete removes from view", async () => {
   assert.strictEqual(view!.today.wets, 0);
 });
 
+test("REGRESSION: book write without currentEvents updates libraryView", async () => {
+  // Reproduces the bug where Library tab's writeEvent calls don't pass
+  // a currentEvents array (Library doesn't have a unified events list,
+  // just sparse-type listeners that are disabled when the view is
+  // loaded). Old gate `!currentEvents` caused the dual-write to skip
+  // view updates entirely; new books vanished from the libraryView.
+  await writeEvent(
+    {
+      type: "book_read",
+      title: "Goodnight Moon",
+      author: "Margaret Wise Brown",
+    },
+    new Date(),
+    // No events array — same shape as Library tab's call site.
+  );
+
+  const libSnap = await getDoc(doc(db, "households", HID, "views", "library"));
+  assert.ok(libSnap.exists(), "library view must be created");
+  const lib = libSnap.data() as { books: { title: string; count: number }[] };
+  assert.strictEqual(lib.books.length, 1);
+  assert.strictEqual(lib.books[0]!.title, "Goodnight Moon");
+  assert.strictEqual(lib.books[0]!.count, 1);
+});
+
+test("REGRESSION: book write preserves prior books in libraryView", async () => {
+  // Layered scenario: backfill seeds the library with one book, then
+  // a new book is logged from the Library tab (no currentEvents). The
+  // recompute-from-recent-events path used to clobber the seeded book
+  // because it wasn't in the small projection. Incremental update via
+  // applyChangeToLibraryView preserves it.
+  await env.withSecurityRulesDisabled(async (adminCtx) => {
+    const adb = adminCtx.firestore();
+    await setDoc(doc(adb, "households", HID, "views", "library"), {
+      books: [
+        {
+          key: "the very hungry caterpillar",
+          title: "The Very Hungry Caterpillar",
+          author: "Eric Carle",
+          count: 3,
+          last_at: Date.now() - 30 * 86400_000,
+          last_event_id: "old-id",
+        },
+      ],
+      foods: [],
+    });
+  });
+
+  await writeEvent(
+    {
+      type: "book_read",
+      title: "Goodnight Moon",
+    },
+    new Date(),
+  );
+
+  const libSnap = await getDoc(doc(db, "households", HID, "views", "library"));
+  const lib = libSnap.data() as { books: { title: string; count: number }[] };
+  assert.strictEqual(lib.books.length, 2, "both books must be present");
+  const titles = lib.books.map((b) => b.title).sort();
+  assert.deepStrictEqual(titles, ["Goodnight Moon", "The Very Hungry Caterpillar"]);
+});
+
+test("REGRESSION: re-reading the same book increments count", async () => {
+  await writeEvent({ type: "book_read", title: "Goodnight Moon" }, new Date());
+  await writeEvent({ type: "book_read", title: "Goodnight Moon" }, new Date());
+  await writeEvent({ type: "book_read", title: "Goodnight Moon" }, new Date());
+
+  const libSnap = await getDoc(doc(db, "households", HID, "views", "library"));
+  const lib = libSnap.data() as { books: { title: string; count: number }[] };
+  assert.strictEqual(lib.books.length, 1);
+  assert.strictEqual(lib.books[0]!.count, 3);
+});
+
 test("rapid serial writes (5 events with stale events array) all land", async () => {
   // The most aggressive race scenario: simulate the user tapping 5
   // backdate buttons in quick succession. Every writeEvent uses the

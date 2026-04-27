@@ -455,6 +455,163 @@ export function computeLibraryView(events: BabyEvent[]): LibraryView {
   return { books, foods };
 }
 
+// ---- Incremental view updates ------------------------------------------
+// These take an existing view + a change descriptor and return the
+// new view, without needing the full event history. Used by the
+// dual-write so book/food writes from the Library tab (which don't
+// have a full events array) still update the view correctly.
+
+export type ViewChange =
+  | { kind: "insert" | "replace"; event: BabyEvent }
+  | { kind: "delete"; eventId: string };
+
+// Apply an event change to the existing LibraryView. Inserts/replaces
+// dedupe-update the matching books/foods entry; deletes decrement count
+// (and remove if count reaches 0). Non-book/food events leave it
+// unchanged.
+export function applyChangeToLibraryView(
+  existing: LibraryView,
+  change: ViewChange,
+): LibraryView {
+  if (change.kind === "delete") {
+    // We don't know the type without reading the event. Decrement any
+    // entry whose last_event_id matches. Drift on counts when an older
+    // event of the same key was deleted is acceptable — backfill heals.
+    const books = existing.books
+      .map((b) =>
+        b.last_event_id === change.eventId
+          ? { ...b, count: Math.max(0, b.count - 1) }
+          : b,
+      )
+      .filter((b) => b.count > 0);
+    const foods = existing.foods
+      .map((f) =>
+        f.last_event_id === change.eventId
+          ? { ...f, count: Math.max(0, f.count - 1) }
+          : f,
+      )
+      .filter((f) => f.count > 0);
+    return { books, foods };
+  }
+  const event = change.event;
+  if (event.type === "book_read") {
+    const key = (event.open_library_key ?? event.title).toLowerCase();
+    const at = event.occurred_at.toMillis();
+    const books = [...existing.books];
+    const idx = books.findIndex((b) => b.key === key);
+    if (idx === -1) {
+      const entry: LibraryBookEntry = {
+        key,
+        title: event.title,
+        count: 1,
+        last_at: at,
+        last_event_id: event.id,
+      };
+      if (event.author !== undefined) entry.author = event.author;
+      if (event.cover_url !== undefined) entry.cover_url = event.cover_url;
+      if (event.open_library_key !== undefined)
+        entry.open_library_key = event.open_library_key;
+      books.push(entry);
+    } else {
+      const cur = books[idx]!;
+      const isNewer = at > cur.last_at;
+      const updated: LibraryBookEntry = {
+        ...cur,
+        count: change.kind === "replace" ? cur.count : cur.count + 1,
+      };
+      if (isNewer) {
+        updated.last_at = at;
+        updated.last_event_id = event.id;
+        updated.title = event.title;
+        const newAuthor = event.author ?? cur.author;
+        if (newAuthor !== undefined) updated.author = newAuthor;
+        else delete updated.author;
+        const newCover = event.cover_url ?? cur.cover_url;
+        if (newCover !== undefined) updated.cover_url = newCover;
+        else delete updated.cover_url;
+        const newKey = event.open_library_key ?? cur.open_library_key;
+        if (newKey !== undefined) updated.open_library_key = newKey;
+        else delete updated.open_library_key;
+      }
+      books[idx] = updated;
+    }
+    books.sort((a, b) => b.last_at - a.last_at);
+    return { ...existing, books };
+  }
+  if (event.type === "food_tried") {
+    const key = event.food_name.trim().toLowerCase();
+    const at = event.occurred_at.toMillis();
+    const foods = [...existing.foods];
+    const idx = foods.findIndex((f) => f.key === key);
+    if (idx === -1) {
+      const reactions: Partial<Record<FoodReaction, number>> = {};
+      if (event.reaction) reactions[event.reaction] = 1;
+      const entry: LibraryFoodEntry = {
+        key,
+        food_name: event.food_name,
+        count: 1,
+        last_at: at,
+        last_event_id: event.id,
+        reactions,
+      };
+      if (event.first_try) entry.first_try_at = at;
+      foods.push(entry);
+    } else {
+      const cur = foods[idx]!;
+      const isNewer = at > cur.last_at;
+      const reactions = { ...cur.reactions };
+      if (event.reaction && change.kind !== "replace") {
+        reactions[event.reaction] = (reactions[event.reaction] ?? 0) + 1;
+      }
+      foods[idx] = {
+        ...cur,
+        count: change.kind === "replace" ? cur.count : cur.count + 1,
+        reactions,
+        ...(isNewer
+          ? {
+              last_at: at,
+              last_event_id: event.id,
+              food_name: event.food_name,
+            }
+          : {}),
+        ...(event.first_try &&
+        (!cur.first_try_at || at < cur.first_try_at)
+          ? { first_try_at: at }
+          : {}),
+      };
+    }
+    foods.sort((a, b) => b.last_at - a.last_at);
+    return { ...existing, foods };
+  }
+  return existing;
+}
+
+// Latest pointers are sparse — Lily's last weight or last book might be
+// older than the recent_events_50 window. When we recompute HomeView
+// from a limited projected events list, computeLatest may produce null
+// for those types. Preserve the existing pointer so it doesn't get
+// clobbered into null.
+export function preserveLatestPointers(
+  recomputed: HomeView["latest"],
+  existing: HomeView["latest"] | undefined,
+  change: ViewChange,
+): HomeView["latest"] {
+  if (!existing) return recomputed;
+  const out: HomeView["latest"] = { ...recomputed };
+  const keys = Object.keys(out) as (keyof HomeView["latest"])[];
+  for (const k of keys) {
+    if (out[k] == null && existing[k] != null) {
+      // Don't preserve a pointer if the change is deleting that exact
+      // event — otherwise a delete leaves a phantom latest pointer.
+      const ex = existing[k]!;
+      if (change.kind === "delete" && ex.eventId === change.eventId) continue;
+      if (change.kind === "replace" && ex.eventId === change.event.id) continue;
+      out[k] = ex as never;
+    }
+  }
+  return out;
+}
+
 // ---- Helpers ------------------------------------------------------------
 
 function toFeedEntry(e: BabyEvent): FeedEntry {

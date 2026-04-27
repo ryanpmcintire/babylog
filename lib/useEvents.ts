@@ -30,12 +30,15 @@ import {
   type SummaryDelta,
 } from "./summaries";
 import {
+  applyChangeToLibraryView,
   computeHomeView,
   computeInsightsView,
   computeLibraryView,
+  preserveLatestPointers,
   type HomeView,
   type InsightsView,
   type LibraryView,
+  type ViewChange,
 } from "./views";
 import type {
   BabyEvent,
@@ -118,45 +121,57 @@ function applyEventChange(
   return without;
 }
 
-// Compute fresh view docs from the union of (the current home view's
-// recent_events array, the live listener's events array, and the new
-// change) and stage the result onto an existing WriteBatch.
+// Apply an event change to all three view docs and stage the writes onto
+// the existing batch. Self-sufficient — reads the existing view docs to
+// merge with whatever currentEvents the caller provided, so writes from
+// places that don't have a full events array (Library tab, Settings page)
+// still update the views correctly.
 //
-// Reading the current view doc first is what makes consecutive writes in
-// the same session safe: each write's projection includes events that
-// previous writes (a few hundred ms ago) added but haven't yet propagated
-// through the snapshot listener.
-//
-// Skips entirely when VIEWS_ENABLED is off, or when the caller didn't
-// provide a live-listener events array.
+// HomeView: recompute from (existing recent_events + currentEvents + change),
+//   then preserve sparse-type latest pointers from the existing view that
+//   the recompute can't see (older than the 50-event window).
+// InsightsView: same recompute pattern (best-effort; counts and recent
+//   markers are correct, very-old markers/weights drift but heal via
+//   backfill).
+// LibraryView: incremental dedupe-update on book_read / food_tried events;
+//   noop for other types. Books/foods deduped by key, so insert is
+//   monotonic and doesn't depend on having full event history.
 async function stageViewWrites(
   batch: ReturnType<typeof writeBatch>,
   hid: string,
-  currentEvents: BabyEvent[] | null,
-  change:
-    | { kind: "insert"; event: BabyEvent }
-    | { kind: "replace"; event: BabyEvent }
-    | { kind: "delete"; eventId: string },
+  currentEvents: BabyEvent[] | null | undefined,
+  change: ViewChange,
 ): Promise<void> {
-  if (!VIEWS_ENABLED || !currentEvents) return;
-  const homeSnap = await getDoc(homeViewDoc(hid));
-  const existing: BabyEvent[] = homeSnap.exists()
-    ? ((homeSnap.data() as HomeView).recent_events ?? [])
-    : [];
+  if (!VIEWS_ENABLED) return;
+
+  const [homeSnap, libSnap] = await Promise.all([
+    getDoc(homeViewDoc(hid)),
+    getDoc(libraryViewDoc(hid)),
+  ]);
+  const existingHome = homeSnap.exists()
+    ? (homeSnap.data() as HomeView)
+    : null;
+  const existingLib: LibraryView = libSnap.exists()
+    ? (libSnap.data() as LibraryView)
+    : { books: [], foods: [] };
+
+  const existingRecent = existingHome?.recent_events ?? [];
   const byId = new Map<string, BabyEvent>();
-  for (const e of existing) byId.set(e.id, e);
-  // Listener events override view events (more recent metadata).
-  for (const e of currentEvents) byId.set(e.id, e);
+  for (const e of existingRecent) byId.set(e.id, e);
+  for (const e of currentEvents ?? []) byId.set(e.id, e);
   const projected = applyEventChange(Array.from(byId.values()), change);
 
   const now = new Date();
   const home = computeHomeView(projected, now);
+  // Sparse-type pointers (last weight, last book, etc.) may live outside
+  // the 50-event window the recompute saw — preserve them from the
+  // existing view unless the change deletes/replaces that exact event.
+  home.latest = preserveLatestPointers(home.latest, existingHome?.latest, change);
+
   const insights = computeInsightsView(projected, now);
-  const library = computeLibraryView(projected);
-  batch.set(homeViewDoc(hid), {
-    ...home,
-    updated_at: Timestamp.now(),
-  });
+  const library = applyChangeToLibraryView(existingLib, change);
+
+  batch.set(homeViewDoc(hid), { ...home, updated_at: Timestamp.now() });
   batch.set(insightsViewDoc(hid), {
     ...insights,
     updated_at: Timestamp.now(),
@@ -416,7 +431,7 @@ async function writeEventWithSummary(
       { merge: true },
     );
   }
-  if (VIEWS_ENABLED && currentEvents) {
+  if (VIEWS_ENABLED) {
     await stageViewWrites(batch, hid, currentEvents, {
       kind: "insert",
       event: { ...(eventBase as object), id: newRef.id } as BabyEvent,
@@ -475,7 +490,7 @@ async function writeSleepEndWithSummary(
     sleep_minutes_by_day: minutesByDay,
   };
   batch.set(newRef, sleepEndEventDoc);
-  if (VIEWS_ENABLED && currentEvents) {
+  if (VIEWS_ENABLED) {
     await stageViewWrites(batch, hid, currentEvents, {
       kind: "insert",
       event: { ...sleepEndEventDoc, id: newRef.id } as unknown as BabyEvent,
@@ -498,10 +513,8 @@ async function writeTemperatureWithSummary(
   await runTransaction(getDb(), async (tx) => {
     // All reads must happen before all writes inside a transaction.
     const snap = await tx.get(ref);
-    const homeSnap =
-      VIEWS_ENABLED && currentEvents
-        ? await tx.get(homeViewDoc(hid))
-        : null;
+    const homeSnap = VIEWS_ENABLED ? await tx.get(homeViewDoc(hid)) : null;
+    const libSnap = VIEWS_ENABLED ? await tx.get(libraryViewDoc(hid)) : null;
     const cur = snap.exists() ? (snap.data() as { maxTempF?: number | null }) : null;
     const newMax =
       cur?.maxTempF == null || payload.temp_f > cur.maxTempF
@@ -513,28 +526,36 @@ async function writeTemperatureWithSummary(
       { merge: true },
     );
     tx.set(newRef, eventBase);
-    if (VIEWS_ENABLED && currentEvents && homeSnap) {
-      const existing: BabyEvent[] = homeSnap.exists()
-        ? ((homeSnap.data() as HomeView).recent_events ?? [])
-        : [];
+    if (VIEWS_ENABLED && homeSnap && libSnap) {
+      const existingHome = homeSnap.exists()
+        ? (homeSnap.data() as HomeView)
+        : null;
+      const existingLib: LibraryView = libSnap.exists()
+        ? (libSnap.data() as LibraryView)
+        : { books: [], foods: [] };
+      const existingRecent = existingHome?.recent_events ?? [];
       const byId = new Map<string, BabyEvent>();
-      for (const e of existing) byId.set(e.id, e);
-      for (const e of currentEvents) byId.set(e.id, e);
-      const projected = applyEventChange(Array.from(byId.values()), {
+      for (const e of existingRecent) byId.set(e.id, e);
+      for (const e of currentEvents ?? []) byId.set(e.id, e);
+      const change: ViewChange = {
         kind: "insert",
         event: { ...eventBase, id: newRef.id } as BabyEvent,
-      });
+      };
+      const projected = applyEventChange(Array.from(byId.values()), change);
       const now = new Date();
-      tx.set(homeViewDoc(hid), {
-        ...computeHomeView(projected, now),
-        updated_at: Timestamp.now(),
-      });
+      const home = computeHomeView(projected, now);
+      home.latest = preserveLatestPointers(
+        home.latest,
+        existingHome?.latest,
+        change,
+      );
+      tx.set(homeViewDoc(hid), { ...home, updated_at: Timestamp.now() });
       tx.set(insightsViewDoc(hid), {
         ...computeInsightsView(projected, now),
         updated_at: Timestamp.now(),
       });
       tx.set(libraryViewDoc(hid), {
-        ...computeLibraryView(projected),
+        ...applyChangeToLibraryView(existingLib, change),
         updated_at: Timestamp.now(),
       });
     }
@@ -588,7 +609,7 @@ async function deleteEventWithSummary(
       );
     }
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
-    if (VIEWS_ENABLED && currentEvents) {
+    if (VIEWS_ENABLED) {
       await stageViewWrites(batch, hid, currentEvents, {
         kind: "delete",
         eventId: id,
@@ -631,7 +652,7 @@ async function deleteEventWithSummary(
       { merge: true },
     );
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
-    if (VIEWS_ENABLED && currentEvents) {
+    if (VIEWS_ENABLED) {
       await stageViewWrites(batch, hid, currentEvents, {
         kind: "delete",
         eventId: id,
@@ -659,7 +680,7 @@ async function deleteEventWithSummary(
     );
   }
   batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
-  if (VIEWS_ENABLED && currentEvents) {
+  if (VIEWS_ENABLED) {
     await stageViewWrites(batch, hid, currentEvents, {
       kind: "delete",
       eventId: id,
@@ -1097,7 +1118,7 @@ async function updateEventWithSummary(
       );
     }
     batch.update(ref, { ...flatUpdate, sleep_minutes_by_day: newMap });
-    if (VIEWS_ENABLED && currentEvents) {
+    if (VIEWS_ENABLED) {
       const updated = projectUpdatedEvent(old, id, flatUpdate, {
         sleep_minutes_by_day: newMap,
       });
@@ -1145,7 +1166,7 @@ async function updateEventWithSummary(
         { merge: true },
       );
     }
-    if (VIEWS_ENABLED && currentEvents) {
+    if (VIEWS_ENABLED) {
       const updated = projectUpdatedEvent(old, id, flatUpdate);
       await stageViewWrites(batch, hid, currentEvents, {
         kind: "replace",
@@ -1196,7 +1217,7 @@ async function updateEventWithSummary(
     );
   }
   batch.update(ref, flatUpdate);
-  if (VIEWS_ENABLED && currentEvents) {
+  if (VIEWS_ENABLED) {
     const updated = projectUpdatedEvent(old, id, flatUpdate);
     await stageViewWrites(batch, hid, currentEvents, {
       kind: "replace",
