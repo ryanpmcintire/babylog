@@ -63,6 +63,11 @@ export function getDb(): Firestore {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
       }),
+      // View docs embed events whose optional fields (notes, side, dose,
+      // milk_types entries, etc.) are sometimes undefined; the dual-write
+      // batch.set would otherwise throw. Equivalent of the admin SDK's
+      // ignoreUndefinedProperties used in scripts/backfill-views.ts.
+      ignoreUndefinedProperties: true,
     });
   } catch {
     // initializeFirestore throws if called twice or if persistence unsupported;
