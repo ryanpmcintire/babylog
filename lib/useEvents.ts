@@ -812,8 +812,26 @@ export function useDailySummariesRange(
     const unsub = onSnapshot(q, (snap) => {
       const byKey = new Map<string, DailySummary>();
       snap.forEach((d) => {
-        const data = d.data() as DailySummary;
-        byKey.set(d.id, { ...data, dayKey: d.id });
+        const raw = d.data() as Partial<DailySummary>;
+        // Incremental dual-writes only set the fields they touched; coerce
+        // missing fields to safe defaults so downstream consumers don't see
+        // undefined.
+        byKey.set(d.id, {
+          dayKey: d.id,
+          feeds: raw.feeds ?? 0,
+          breast_feeds: raw.breast_feeds ?? 0,
+          bottle_feeds: raw.bottle_feeds ?? 0,
+          pump_count: raw.pump_count ?? 0,
+          milkMl: raw.milkMl ?? 0,
+          pumpMl: raw.pumpMl ?? 0,
+          diapers: raw.diapers ?? 0,
+          wets: raw.wets ?? 0,
+          dirties: raw.dirties ?? 0,
+          mixeds: raw.mixeds ?? 0,
+          meds: raw.meds ?? 0,
+          sleepMinutes: raw.sleepMinutes ?? 0,
+          maxTempF: raw.maxTempF ?? null,
+        });
       });
       const out: DailySummary[] = [];
       for (let i = days - 1; i >= 0; i--) {

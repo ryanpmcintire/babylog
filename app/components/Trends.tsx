@@ -28,7 +28,7 @@ function summariesToBuckets(
     const diff = Math.round(
       (new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() -
         date.getTime()) /
-        86400000,
+            86400000,
     );
     const label =
       s.dayKey === todayKey
@@ -36,19 +36,23 @@ function summariesToBuckets(
         : diff === 1
           ? "Yest"
           : date.toLocaleDateString(undefined, { weekday: "short" });
+    // Daily-summary docs created via FieldValue.increment-only writes
+    // (the common path for feed/diaper/etc.) won't have keys for fields
+    // the event didn't touch. Coerce missing fields to safe defaults so
+    // downstream chart code can rely on the DayBucket shape.
     return {
       date,
       label,
-      milkMl: s.milkMl,
-      pumpMl: s.pumpMl,
-      sleepMinutes: s.sleepMinutes,
-      feeds: s.feeds,
-      diapers: s.diapers,
-      wets: s.wets,
-      dirties: s.dirties,
-      mixeds: s.mixeds,
-      meds: s.meds,
-      maxTempF: s.maxTempF,
+      milkMl: s.milkMl ?? 0,
+      pumpMl: s.pumpMl ?? 0,
+      sleepMinutes: s.sleepMinutes ?? 0,
+      feeds: s.feeds ?? 0,
+      diapers: s.diapers ?? 0,
+      wets: s.wets ?? 0,
+      dirties: s.dirties ?? 0,
+      mixeds: s.mixeds ?? 0,
+      meds: s.meds ?? 0,
+      maxTempF: s.maxTempF ?? null,
     };
   });
 }
