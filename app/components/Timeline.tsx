@@ -151,6 +151,7 @@ export function Timeline({
       {editingEvent && (
         <EditEventSheet
           event={editingEvent}
+          events={liveEvents}
           onClose={() => setEditingId(null)}
         />
       )}

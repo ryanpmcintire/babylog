@@ -373,6 +373,7 @@ export function TodayClock({ events }: { events: BabyEvent[] }) {
       {editingEvent && (
         <EditEventSheet
           event={editingEvent}
+          events={events}
           onClose={() => setEditingId(null)}
         />
       )}

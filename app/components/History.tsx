@@ -240,6 +240,7 @@ export function History({
       {editing && (
         <EditEventSheet
           event={editing}
+          events={events}
           onClose={() => setEditing(null)}
         />
       )}

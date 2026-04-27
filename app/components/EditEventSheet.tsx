@@ -25,9 +25,11 @@ const FOOD_REACTIONS: { value: FoodReaction; label: string }[] = [
 
 export function EditEventSheet({
   event,
+  events,
   onClose,
 }: {
   event: BabyEvent;
+  events?: BabyEvent[];
   onClose: () => void;
 }) {
   const [when, setWhen] = useState(toLocalInput(event.occurred_at.toDate()));
@@ -214,7 +216,7 @@ export function EditEventSheet({
         }
       }
 
-      await updateEvent(event.id, patch);
+      await updateEvent(event.id, patch, events);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save");
