@@ -279,6 +279,9 @@ export function computeHomeView(
     }
     if (
       (e.type === "breast_feed" || e.type === "bottle_feed") &&
+      // Exclude no-latch breast attempts from the prediction lookback —
+      // the median-interval estimate should be based on actual feedings.
+      !(e.type === "breast_feed" && e.outcome === "no_latch") &&
       recent_feeds.length < PREDICTION_LOOKBACK
     ) {
       recent_feeds.push(toFeedEntry(e));
@@ -738,6 +741,10 @@ export function applyChangeToInsightsView(
           };
     switch (e.type) {
       case "breast_feed":
+        // Skip no-latch attempts — they're logged but don't count as
+        // a feeding. See deltaForEvent for the matching summary-coll
+        // logic.
+        if (e.outcome === "no_latch") break;
         cur.feeds += 1;
         cur.breast_feeds += 1;
         break;

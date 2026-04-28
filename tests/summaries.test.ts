@@ -60,9 +60,20 @@ test("dayKeysInRange returns single key for same-day range", () => {
   assert.deepStrictEqual(dayKeysInRange(start, end), ["2026-04-25"]);
 });
 
-test("deltaForEvent: breast_feed", () => {
+test("deltaForEvent: breast_feed (latched)", () => {
+  const d = deltaForEvent({ type: "breast_feed", outcome: "latched_fed" });
+  assert.deepStrictEqual(d, { feeds: 1, breast_feeds: 1 });
+});
+
+test("deltaForEvent: breast_feed without outcome still counts", () => {
+  // Old data may not carry an outcome; default to counting it.
   const d = deltaForEvent({ type: "breast_feed" });
   assert.deepStrictEqual(d, { feeds: 1, breast_feeds: 1 });
+});
+
+test("deltaForEvent: breast_feed with no_latch does NOT count as a feed", () => {
+  const d = deltaForEvent({ type: "breast_feed", outcome: "no_latch" });
+  assert.strictEqual(d, null, "no_latch must not increment feeds counter");
 });
 
 test("deltaForEvent: bottle_feed includes volume", () => {

@@ -119,6 +119,8 @@ export function buildDailyBuckets(
         b.feeds += 1;
         break;
       case "breast_feed":
+        // Skip no-latch attempts — logged but don't count as a feeding.
+        if (e.outcome === "no_latch") break;
         b.feeds += 1;
         break;
       case "pump":

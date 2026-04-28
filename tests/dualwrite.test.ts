@@ -695,6 +695,82 @@ test("end-to-end: a typical day of mixed events leaves view consistent", async (
   assert.strictEqual(view!.today.maxTempF, todayEntry!.maxTempF);
 });
 
+test("breast_feed with outcome=no_latch is NOT counted as a feeding", async () => {
+  // Logged so the parent can track the attempt, but counters skip it.
+  await writeEvent(
+    { type: "breast_feed", outcome: "no_latch", side: "left" },
+    new Date(),
+    [],
+  );
+
+  const today = new Date();
+  const dk = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, "0")}-${today.getDate().toString().padStart(2, "0")}`;
+
+  // Daily summary collection: no feeds increment.
+  const sumSnap = await getDoc(
+    doc(db, "households", HID, "daily_summaries", dk),
+  );
+  if (sumSnap.exists()) {
+    const s = sumSnap.data() as { feeds?: number; breast_feeds?: number };
+    assert.strictEqual(s.feeds ?? 0, 0, "feeds must stay 0 for no_latch");
+    assert.strictEqual(s.breast_feeds ?? 0, 0);
+  }
+
+  // homeView.today: feeds 0.
+  const view = await readHomeView();
+  assert.ok(view);
+  assert.strictEqual(view!.today.feeds, 0);
+  assert.strictEqual(view!.today.breast_feeds, 0);
+
+  // recent_feeds (used for next-feed prediction) excludes no_latch.
+  assert.strictEqual(view!.recent_feeds.length, 0);
+
+  // The event itself IS in recent_events — parent can still see/edit it.
+  assert.strictEqual(view!.recent_events.length, 1);
+});
+
+test("breast_feed mix: latched events count, no_latch don't", async () => {
+  let events: BabyEvent[] = [];
+  await writeEvent(
+    { type: "breast_feed", outcome: "latched_fed", side: "left" },
+    new Date(),
+    events,
+  );
+  events = await readEvents();
+  await writeEvent(
+    { type: "breast_feed", outcome: "no_latch", side: "right" },
+    new Date(),
+    events,
+  );
+  events = await readEvents();
+  await writeEvent(
+    { type: "breast_feed", outcome: "latched_brief", side: "left" },
+    new Date(),
+    events,
+  );
+
+  const view = await readHomeView();
+  assert.ok(view);
+  // 2 latched events count, 1 no_latch doesn't.
+  assert.strictEqual(view!.today.feeds, 2);
+  assert.strictEqual(view!.today.breast_feeds, 2);
+  // recent_feeds skips no_latch too.
+  assert.strictEqual(view!.recent_feeds.length, 2);
+
+  const today = new Date();
+  const dk = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, "0")}-${today.getDate().toString().padStart(2, "0")}`;
+  const insSnap = await getDoc(
+    doc(db, "households", HID, "views", "insights"),
+  );
+  const ins = insSnap.data() as {
+    daily_summaries: { dayKey: string; feeds: number; breast_feeds: number }[];
+  };
+  const t = ins.daily_summaries.find((d) => d.dayKey === dk);
+  assert.ok(t);
+  assert.strictEqual(t!.feeds, 2, "insightsView increment skips no_latch too");
+  assert.strictEqual(t!.breast_feeds, 2);
+});
+
 test("rapid serial writes (5 events with stale events array) all land", async () => {
   // The most aggressive race scenario: simulate the user tapping 5
   // backdate buttons in quick succession. Every writeEvent uses the

@@ -92,8 +92,14 @@ export function deltaForEvent(
   event: Pick<BabyEvent, "type"> & Partial<BabyEvent>,
 ): SummaryDelta | null {
   switch (event.type) {
-    case "breast_feed":
+    case "breast_feed": {
+      // A breast event with outcome=no_latch is logged so the parent
+      // can track the attempt, but it doesn't count as a feeding for
+      // count purposes (today's feeds, summary feeds, breast_feeds).
+      const outcome = (event as { outcome?: string }).outcome;
+      if (outcome === "no_latch") return null;
       return { feeds: 1, breast_feeds: 1 };
+    }
     case "bottle_feed":
       return {
         feeds: 1,
