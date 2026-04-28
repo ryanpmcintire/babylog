@@ -265,22 +265,16 @@ export function computeHomeView(
     const at = e.occurred_at.toMillis();
     if (e.type === "medication" && at >= sevenDaysAgo) {
       if (meds_last_7d.length < MEDS_HARD_CAP) {
-        meds_last_7d.push({
-          at,
-          eventId: e.id,
-          name: e.name,
-          dose: e.dose,
-        });
+        const med: MedEntry = { at, eventId: e.id, name: e.name };
+        if (e.dose !== undefined) med.dose = e.dose;
+        meds_last_7d.push(med);
       }
     }
     if (e.type === "temperature" && at >= dayAgo) {
       if (temps_last_24h.length < TEMPS_HARD_CAP) {
-        temps_last_24h.push({
-          at,
-          eventId: e.id,
-          temp_f: e.temp_f,
-          method: e.method,
-        });
+        const temp: TempEntry = { at, eventId: e.id, temp_f: e.temp_f };
+        if (e.method !== undefined) temp.method = e.method;
+        temps_last_24h.push(temp);
       }
     }
     if (
@@ -838,13 +832,14 @@ function toFeedEntry(e: BabyEvent): FeedEntry {
     };
   }
   if (e.type === "breast_feed") {
-    return {
+    const fe: FeedEntry = {
       at: e.occurred_at.toMillis(),
       eventId: e.id,
       type: "breast_feed",
-      side: e.side,
       outcome: e.outcome,
     };
+    if (e.side !== undefined) fe.side = e.side;
+    return fe;
   }
   // Caller should never pass non-feed; satisfy TS.
   throw new Error(`toFeedEntry: not a feed event (${e.type})`);
@@ -867,16 +862,25 @@ function computeLatest(sorted: BabyEvent[]): HomeView["latest"] {
     const at = e.occurred_at.toMillis();
     switch (e.type) {
       case "breast_feed":
-        if (!out.feed)
-          out.feed = {
+        if (!out.feed) {
+          const f: NonNullable<HomeView["latest"]["feed"]> = {
             at,
             eventId: e.id,
             kind: "breast",
-            side: e.side,
             outcome: e.outcome,
           };
-        if (!out.breast)
-          out.breast = { at, eventId: e.id, side: e.side, outcome: e.outcome };
+          if (e.side !== undefined) f.side = e.side;
+          out.feed = f;
+        }
+        if (!out.breast) {
+          const b: NonNullable<HomeView["latest"]["breast"]> = {
+            at,
+            eventId: e.id,
+            outcome: e.outcome,
+          };
+          if (e.side !== undefined) b.side = e.side;
+          out.breast = b;
+        }
         break;
       case "bottle_feed":
         if (!out.feed)
@@ -896,13 +900,15 @@ function computeLatest(sorted: BabyEvent[]): HomeView["latest"] {
           };
         break;
       case "pump":
-        if (!out.pump)
-          out.pump = {
+        if (!out.pump) {
+          const p: NonNullable<HomeView["latest"]["pump"]> = {
             at,
             eventId: e.id,
             volume_ml: e.volume_ml,
-            side: e.side,
           };
+          if (e.side !== undefined) p.side = e.side;
+          out.pump = p;
+        }
         break;
       case "diaper_wet":
       case "diaper_dirty":
@@ -920,22 +926,26 @@ function computeLatest(sorted: BabyEvent[]): HomeView["latest"] {
           };
         break;
       case "medication":
-        if (!out.medication)
-          out.medication = {
+        if (!out.medication) {
+          const m: NonNullable<HomeView["latest"]["medication"]> = {
             at,
             eventId: e.id,
             name: e.name,
-            dose: e.dose,
           };
+          if (e.dose !== undefined) m.dose = e.dose;
+          out.medication = m;
+        }
         break;
       case "temperature":
-        if (!out.temperature)
-          out.temperature = {
+        if (!out.temperature) {
+          const t: NonNullable<HomeView["latest"]["temperature"]> = {
             at,
             eventId: e.id,
             temp_f: e.temp_f,
-            method: e.method,
           };
+          if (e.method !== undefined) t.method = e.method;
+          out.temperature = t;
+        }
         break;
       case "weight":
         if (!out.weight)

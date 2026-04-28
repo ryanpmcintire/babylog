@@ -190,6 +190,38 @@ test("computeLibraryView: dedupes books by open_library_key or title", () => {
   assert.strictEqual(goodnight.count, 2);
 });
 
+test("explicitSleepWindows is order-independent (defensive sort)", async () => {
+  // Regression for the 4/28 bug: backfill called explicitSleepWindows on
+  // events from Firestore .get() which has no ordering guarantee. The
+  // walker assumed newest-first and produced overlapping multi-day
+  // windows. Defensive sort inside the function keeps it correct
+  // regardless of input order.
+  const { explicitSleepWindows } = await import("../lib/aggregates");
+  const sleepStart1 = evt("sleep_start", new Date(2026, 3, 26, 22, 0));
+  const sleepEnd1 = evt("sleep_end", new Date(2026, 3, 27, 6, 0));
+  const sleepStart2 = evt("sleep_start", new Date(2026, 3, 27, 14, 0));
+  const sleepEnd2 = evt("sleep_end", new Date(2026, 3, 27, 16, 0));
+  const events = [sleepStart1, sleepEnd1, sleepStart2, sleepEnd2];
+  const now = new Date(2026, 3, 27, 18, 0);
+
+  const expected = explicitSleepWindows([...events].reverse(), now);
+  // Same events, scrambled.
+  const scrambled = [sleepEnd2, sleepStart1, sleepEnd1, sleepStart2];
+  const got = explicitSleepWindows(scrambled, now);
+  assert.strictEqual(got.length, expected.length);
+  for (let i = 0; i < got.length; i++) {
+    assert.strictEqual(got[i]!.start.getTime(), expected[i]!.start.getTime());
+    assert.strictEqual(got[i]!.end.getTime(), expected[i]!.end.getTime());
+  }
+  // Each window should be a valid (non-negative duration) pair.
+  for (const w of got) {
+    assert.ok(
+      w.end.getTime() >= w.start.getTime(),
+      "windows must have non-negative duration",
+    );
+  }
+});
+
 test("computeLibraryView: dedupes foods and accumulates reactions", () => {
   const events: BabyEvent[] = [
     evt("food_tried", new Date(2026, 3, 26, 12, 0), {

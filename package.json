@@ -9,7 +9,8 @@
     "test:rules": "firebase emulators:exec --only firestore \"tsx --test tests/firestore.rules.test.ts\"",
     "test:dualwrite": "firebase emulators:exec --only firestore \"cross-env NEXT_PUBLIC_USE_SUMMARIES=true NEXT_PUBLIC_USE_VIEWS=true tsx --test tests/dualwrite.test.ts\"",
     "test:unit": "tsx --test tests/summaries.test.ts tests/views.test.ts",
-    "test": "tsx --test tests/summaries.test.ts tests/views.test.ts && firebase emulators:exec --only firestore \"cross-env NEXT_PUBLIC_USE_SUMMARIES=true NEXT_PUBLIC_USE_VIEWS=true tsx --test tests/firestore.rules.test.ts tests/dualwrite.test.ts\"",
+    "test:component": "vitest run --config vitest.config.ts",
+    "test": "tsx --test tests/summaries.test.ts tests/views.test.ts && vitest run --config vitest.config.ts && firebase emulators:exec --only firestore \"cross-env NEXT_PUBLIC_USE_SUMMARIES=true NEXT_PUBLIC_USE_VIEWS=true tsx --test tests/firestore.rules.test.ts tests/dualwrite.test.ts\"",
     "migrate:emulator": "cross-env FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_PROJECT_ID=babylog-ea6b2 tsx scripts/migrate-to-households.ts",
     "merge-mixed:emulator": "cross-env FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_PROJECT_ID=babylog-ea6b2 tsx scripts/merge-mixed-diapers.ts",
     "backfill-summaries:emulator": "cross-env FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_PROJECT_ID=babylog-ea6b2 tsx scripts/backfill-summaries.ts",
@@ -27,17 +28,24 @@
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.0",
     "@tailwindcss/postcss": "^4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "firebase-admin": "^13.8.0",
     "firebase-tools": "^15.15.0",
+    "jsdom": "^25.0.1",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

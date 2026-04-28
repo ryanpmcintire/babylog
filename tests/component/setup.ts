@@ -1,0 +1,94 @@
+// Vitest setup for component tests. Provides jsdom + Testing Library
+// matchers and global mocks for the @/lib modules that touch Firebase.
+//
+// The goal of this suite is *not* to test Firestore behavior (the
+// dualwrite emulator suite covers that). It's to catch prop-drilling
+// regressions in React components — specifically, that interactive
+// elements actually wire up to writeEvent / updateEvent / softDeleteEvent
+// with the expected arguments. Tests assert on calls to those mocked
+// functions; the real Firebase SDK is never loaded.
+
+import "@testing-library/jest-dom/vitest";
+import { vi } from "vitest";
+
+// Spy implementations for the imperative event API. Tests reset and
+// inspect them via the exported helpers below.
+export const mockWriteEvent = vi.fn(async () => "mock-event-id");
+export const mockUpdateEvent = vi.fn(async () => undefined);
+export const mockSoftDeleteEvent = vi.fn(async () => undefined);
+
+// View hooks default to returning null (loading state). Tests can
+// override with mockUseHomeView.mockReturnValue(...) etc.
+export const mockUseHomeView = vi.fn(() => ({ view: null, loading: true }));
+export const mockUseInsightsView = vi.fn(() => ({ view: null, loading: true }));
+export const mockUseLibraryView = vi.fn(() => ({ view: null, loading: true }));
+
+vi.mock("@/lib/firebase", () => ({
+  getDb: vi.fn(() => ({})),
+  getFirebaseAuth: vi.fn(() => ({
+    currentUser: { uid: "test-uid", email: "test@example.com" },
+  })),
+  __setTestFirebase: vi.fn(),
+}));
+
+vi.mock("@/lib/useEvents", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/useEvents")>(
+    "@/lib/useEvents",
+  );
+  return {
+    ...actual,
+    writeEvent: mockWriteEvent,
+    updateEvent: mockUpdateEvent,
+    softDeleteEvent: mockSoftDeleteEvent,
+    useHomeView: mockUseHomeView,
+    useInsightsView: mockUseInsightsView,
+    useLibraryView: mockUseLibraryView,
+    useRecentEvents: vi.fn(() => ({
+      events: [],
+      loading: false,
+      error: null,
+      source: "new" as const,
+    })),
+    useEventsByType: vi.fn(() => []),
+    useAllWeights: vi.fn(() => []),
+    useExtendedEvents: vi.fn(() => ({ events: [], loadingMore: false })),
+    useDailySummariesRange: vi.fn(() => ({ summaries: [], loading: false })),
+    fetchEventsInRange: vi.fn(async () => []),
+    fetchAllEvents: vi.fn(async () => []),
+    VIEWS_FLAG_ENABLED: true,
+    SUMMARIES_FLAG_ENABLED: true,
+  };
+});
+
+vi.mock("@/app/providers", () => ({
+  useAuth: () => ({
+    user: { uid: "test-uid", email: "test@example.com" },
+    loading: false,
+    signOut: vi.fn(),
+  }),
+}));
+
+// Most components call useBaby for the baby's birthdate. Stub it.
+vi.mock("@/lib/useBaby", () => ({
+  useBaby: () => ({
+    id: "mcintire",
+    name: "Lily",
+    fullName: "Lily Patricia McIntire",
+    birthdate: new Date("2026-04-09"),
+  }),
+}));
+
+vi.mock("@/lib/prefs", () => ({
+  useBoolPref: () => [false, vi.fn()],
+}));
+
+// Reset spies between tests so call counts/args don't leak.
+import { afterEach } from "vitest";
+afterEach(() => {
+  mockWriteEvent.mockClear();
+  mockUpdateEvent.mockClear();
+  mockSoftDeleteEvent.mockClear();
+  mockUseHomeView.mockReturnValue({ view: null, loading: true });
+  mockUseInsightsView.mockReturnValue({ view: null, loading: true });
+  mockUseLibraryView.mockReturnValue({ view: null, loading: true });
+});
