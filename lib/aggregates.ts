@@ -66,8 +66,10 @@ function startOfDay(d: Date): Date {
 }
 
 function dayKey(d: Date): string {
-  const y = startOfDay(d);
-  return `${y.getFullYear()}-${y.getMonth()}-${y.getDate()}`;
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, "0");
+  const day = d.getDate().toString().padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function shortLabel(d: Date, today: Date): string {

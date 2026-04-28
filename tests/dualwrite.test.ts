@@ -248,6 +248,100 @@ test("REGRESSION: soft-delete removes from view", async () => {
   assert.strictEqual(view!.today.wets, 0);
 });
 
+test("REGRESSION: logging on a new day adds today's daily_summaries entry", async () => {
+  // Reproduces the bug where the day rolled forward (backfill ran
+  // yesterday, today is a new day not yet in the array). A new event
+  // logged today found no entry to update, so today's totals never
+  // appeared in Trends.
+  const yesterday = new Date(Date.now() - 86400_000);
+  const yesterdayDayKey = `${yesterday.getFullYear()}-${(yesterday.getMonth() + 1).toString().padStart(2, "0")}-${yesterday.getDate().toString().padStart(2, "0")}`;
+
+  await env.withSecurityRulesDisabled(async (adminCtx) => {
+    const adb = adminCtx.firestore();
+    await setDoc(doc(adb, "households", HID, "views", "insights"), {
+      daily_summaries: [
+        {
+          dayKey: yesterdayDayKey,
+          feeds: 5,
+          breast_feeds: 3,
+          bottle_feeds: 2,
+          pump_count: 0,
+          milkMl: 180,
+          pumpMl: 0,
+          diapers: 6,
+          wets: 4,
+          dirties: 2,
+          mixeds: 0,
+          meds: 0,
+          sleepMinutes: 480,
+          maxTempF: null,
+        },
+      ],
+      markers: [],
+      sleep_segments: [],
+      weights: [],
+    });
+  });
+
+  // Log today.
+  await writeEvent(
+    { type: "bottle_feed", volume_ml: 90, milk_types: ["mom_pumped"] },
+    new Date(),
+    [],
+  );
+
+  const today = new Date();
+  const todayDayKey = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, "0")}-${today.getDate().toString().padStart(2, "0")}`;
+
+  const snap = await getDoc(doc(db, "households", HID, "views", "insights"));
+  const v = snap.data() as {
+    daily_summaries: { dayKey: string; feeds: number; milkMl: number }[];
+  };
+  const todayEntry = v.daily_summaries.find((d) => d.dayKey === todayDayKey);
+  assert.ok(todayEntry, "today's daily_summary entry must be added");
+  assert.strictEqual(todayEntry!.feeds, 1);
+  assert.strictEqual(todayEntry!.milkMl, 90);
+  // Yesterday's entry must still be present.
+  const yEntry = v.daily_summaries.find((d) => d.dayKey === yesterdayDayKey);
+  assert.ok(yEntry, "yesterday must still be present");
+  assert.strictEqual(yEntry!.feeds, 5);
+});
+
+test("REGRESSION: sleep_end produces sleep_segments split across midnight", async () => {
+  // A sleep_start logged the prior evening + a sleep_end this morning
+  // must produce sleep_segments for both yesterday (the evening portion)
+  // and today (the morning portion).
+  const yesterdayEvening = new Date();
+  yesterdayEvening.setHours(yesterdayEvening.getHours() - 8); // ~8h ago
+  const todayMorning = new Date();
+
+  // Seed yesterday's sleep_start through writeEvent so it lands cleanly.
+  const startId = await writeEvent(
+    { type: "sleep_start" },
+    yesterdayEvening,
+    [],
+  );
+  void startId;
+  // Then today's sleep_end — same path the app uses.
+  await writeEvent({ type: "sleep_end" }, todayMorning, []);
+
+  const snap = await getDoc(doc(db, "households", HID, "views", "insights"));
+  const v = snap.data() as {
+    sleep_segments: { dayKey: string; startMin: number; endMin: number }[];
+  };
+  const yKey = `${yesterdayEvening.getFullYear()}-${(yesterdayEvening.getMonth() + 1).toString().padStart(2, "0")}-${yesterdayEvening.getDate().toString().padStart(2, "0")}`;
+  const tKey = `${todayMorning.getFullYear()}-${(todayMorning.getMonth() + 1).toString().padStart(2, "0")}-${todayMorning.getDate().toString().padStart(2, "0")}`;
+  const ySegs = v.sleep_segments.filter((s) => s.dayKey === yKey);
+  const tSegs = v.sleep_segments.filter((s) => s.dayKey === tKey);
+  // If yesterdayEvening was actually in the same calendar day as
+  // todayMorning (e.g. running near midnight), at least the day-of has
+  // a segment; otherwise both should.
+  if (yKey !== tKey) {
+    assert.ok(ySegs.length > 0, "yesterday must have sleep segments");
+  }
+  assert.ok(tSegs.length > 0, "today must have sleep segments");
+});
+
 test("REGRESSION: insightsView weights/markers/segments survive subsequent event writes", async () => {
   // Reproduces the bug where dual-write recomputed insightsView from
   // a 50-event projection — wiping weights, markers, and sleep segments

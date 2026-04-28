@@ -720,51 +720,79 @@ export function applyChangeToInsightsView(
     const e = change.event;
     const dk = dayKeyOf(e.occurred_at.toDate());
     const idx = daily_summaries.findIndex((d) => d.dayKey === dk);
+    // Build a target entry — either the existing one, or a fresh zero
+    // summary for a brand-new day (e.g. day rolled past the latest
+    // backfill output).
+    const cur: DailySummary =
+      idx !== -1
+        ? { ...daily_summaries[idx]! }
+        : {
+            dayKey: dk,
+            feeds: 0,
+            breast_feeds: 0,
+            bottle_feeds: 0,
+            pump_count: 0,
+            milkMl: 0,
+            pumpMl: 0,
+            diapers: 0,
+            wets: 0,
+            dirties: 0,
+            mixeds: 0,
+            meds: 0,
+            sleepMinutes: 0,
+            maxTempF: null,
+          };
+    switch (e.type) {
+      case "breast_feed":
+        cur.feeds += 1;
+        cur.breast_feeds += 1;
+        break;
+      case "bottle_feed":
+        cur.feeds += 1;
+        cur.bottle_feeds += 1;
+        cur.milkMl += e.volume_ml;
+        break;
+      case "pump":
+        cur.pump_count += 1;
+        cur.pumpMl += e.volume_ml;
+        break;
+      case "diaper_wet":
+        cur.diapers += 1;
+        cur.wets += 1;
+        break;
+      case "diaper_dirty":
+        cur.diapers += 1;
+        cur.dirties += 1;
+        break;
+      case "diaper_mixed":
+        cur.diapers += 1;
+        cur.mixeds += 1;
+        cur.wets += 1;
+        cur.dirties += 1;
+        break;
+      case "medication":
+        cur.meds += 1;
+        break;
+      case "temperature":
+        if (cur.maxTempF == null || e.temp_f > cur.maxTempF) {
+          cur.maxTempF = e.temp_f;
+        }
+        break;
+    }
     if (idx !== -1) {
-      const cur = daily_summaries[idx]!;
-      const updated: DailySummary = { ...cur };
-      switch (e.type) {
-        case "breast_feed":
-          updated.feeds += 1;
-          updated.breast_feeds += 1;
-          break;
-        case "bottle_feed":
-          updated.feeds += 1;
-          updated.bottle_feeds += 1;
-          updated.milkMl += e.volume_ml;
-          break;
-        case "pump":
-          updated.pump_count += 1;
-          updated.pumpMl += e.volume_ml;
-          break;
-        case "diaper_wet":
-          updated.diapers += 1;
-          updated.wets += 1;
-          break;
-        case "diaper_dirty":
-          updated.diapers += 1;
-          updated.dirties += 1;
-          break;
-        case "diaper_mixed":
-          updated.diapers += 1;
-          updated.mixeds += 1;
-          updated.wets += 1;
-          updated.dirties += 1;
-          break;
-        case "medication":
-          updated.meds += 1;
-          break;
-        case "temperature":
-          if (updated.maxTempF == null || e.temp_f > updated.maxTempF) {
-            updated.maxTempF = e.temp_f;
-          }
-          break;
-      }
       daily_summaries = [
         ...daily_summaries.slice(0, idx),
-        updated,
+        cur,
         ...daily_summaries.slice(idx + 1),
       ];
+    } else {
+      // New day — insert into the array and trim oldest if past limit.
+      daily_summaries = [...daily_summaries, cur].sort((a, b) =>
+        a.dayKey.localeCompare(b.dayKey),
+      );
+      if (daily_summaries.length > INSIGHTS_DAYS) {
+        daily_summaries = daily_summaries.slice(-INSIGHTS_DAYS);
+      }
     }
   }
 
