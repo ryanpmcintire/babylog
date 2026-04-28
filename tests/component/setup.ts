@@ -82,8 +82,22 @@ vi.mock("@/lib/prefs", () => ({
   useBoolPref: () => [false, vi.fn()],
 }));
 
-// Reset spies between tests so call counts/args don't leak.
-import { afterEach } from "vitest";
+// HomeClient composition tests need rhythm + funAge — stub them.
+vi.mock("@/lib/rhythm", () => ({
+  rhythmClassFor: () => "",
+  useFunAgeMode: () => "off",
+  readFunAgeMode: () => null,
+  writeFunAgeMode: vi.fn(),
+}));
+
+// Reset spies + localStorage between tests so call counts and the
+// last-active-tab persistence don't leak across tests.
+import { afterEach, beforeEach } from "vitest";
+beforeEach(() => {
+  if (typeof window !== "undefined") {
+    window.localStorage.clear();
+  }
+});
 afterEach(() => {
   mockWriteEvent.mockClear();
   mockUpdateEvent.mockClear();
@@ -91,4 +105,7 @@ afterEach(() => {
   mockUseHomeView.mockReturnValue({ view: null, loading: true });
   mockUseInsightsView.mockReturnValue({ view: null, loading: true });
   mockUseLibraryView.mockReturnValue({ view: null, loading: true });
+  if (typeof window !== "undefined") {
+    window.localStorage.clear();
+  }
 });
