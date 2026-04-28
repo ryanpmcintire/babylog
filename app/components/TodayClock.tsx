@@ -102,7 +102,11 @@ export function TodayClock({ events }: { events: BabyEvent[] }) {
         at.getHours() * 60 + at.getMinutes() + at.getSeconds() / 60;
       if (e.type === "breast_feed" || e.type === "bottle_feed") {
         feedDots.push({ min, id: e.id });
-      } else if (e.type === "diaper_wet" || e.type === "diaper_dirty") {
+      } else if (
+        e.type === "diaper_wet" ||
+        e.type === "diaper_dirty" ||
+        e.type === "diaper_mixed"
+      ) {
         diaperDots.push({ min, id: e.id });
       }
     }

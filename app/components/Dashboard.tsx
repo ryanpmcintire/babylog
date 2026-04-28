@@ -277,10 +277,12 @@ export function Dashboard({
           nextAt: new Date(rawNextFeed.lastAt.getTime() + feedFloorMs),
         }
       : rawNextFeed;
-  // Merge wet+dirty events within 15 minutes — they're typically the same change.
+  // Merge diaper events within 15 minutes — wet+dirty logged together is
+  // typically one change. Mixed counts too, otherwise the prediction
+  // anchors on an older event and shows "overdue" right after a mixed log.
   const nextDiaper = estimateNextEvent(
     effectiveEvents,
-    ["diaper_wet", "diaper_dirty"],
+    ["diaper_wet", "diaper_dirty", "diaper_mixed"],
     8,
     15 * 60 * 1000,
   );
