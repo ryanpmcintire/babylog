@@ -365,7 +365,8 @@ function buildAwakeIntervals(
       e.type === "breast_feed" ||
       e.type === "bottle_feed" ||
       e.type === "diaper_wet" ||
-      e.type === "diaper_dirty"
+      e.type === "diaper_dirty" ||
+      e.type === "diaper_mixed"
     ) {
       raw.push({
         start: new Date(atMs - preMs),
