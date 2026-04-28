@@ -6,12 +6,10 @@ import {
   useHomeView,
   useInsightsView,
   useLibraryView,
-  useRecentEvents,
-  VIEWS_FLAG_ENABLED,
 } from "@/lib/useEvents";
 import { useBoolPref } from "@/lib/prefs";
 import type { BabyEvent, Side } from "@/lib/events";
-import { Dashboard, isCurrentlySleeping } from "./Dashboard";
+import { Dashboard } from "./Dashboard";
 import { TodayClock } from "./TodayClock";
 import { ActionGrid } from "./ActionGrid";
 import { SleepControl } from "./SleepControl";
@@ -49,23 +47,13 @@ function readStoredTab(): Tab {
 }
 
 export function HomeClient() {
-  const { view: homeView, loading: homeLoading } = useHomeView();
+  const { view: homeView, loading } = useHomeView();
   const { view: insightsView } = useInsightsView();
   const { view: libraryView } = useLibraryView();
-  // When views are on, derive events from the home view doc's embedded
-  // recent_events (50 newest) instead of attaching a separate listener
-  // on the events collection. Cuts cold-cache page-open cost from
-  // ~200 doc reads to 1.
-  const fallback = useRecentEvents(VIEWS_FLAG_ENABLED ? 0 : 200);
-  const events: BabyEvent[] = VIEWS_FLAG_ENABLED
-    ? (homeView?.recent_events ?? [])
-    : fallback.events;
-  const loading = VIEWS_FLAG_ENABLED ? homeLoading : fallback.loading;
-  const error = VIEWS_FLAG_ENABLED ? null : fallback.error;
-  const source = VIEWS_FLAG_ENABLED ? "new" : fallback.source;
-  const sleeping = homeView
-    ? homeView.sleep_state.sleeping
-    : isCurrentlySleeping(events);
+  // Events are sourced from the home view doc's embedded recent_events
+  // (50 newest) — no separate listener on the events collection.
+  const events: BabyEvent[] = homeView?.recent_events ?? [];
+  const sleeping = homeView?.sleep_state.sleeping ?? false;
   const [backdateOpen, setBackdateOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("home");
   const [tonightMode, setTonightMode] = useBoolPref("tonightMode");
@@ -105,9 +93,6 @@ export function HomeClient() {
           </button>
         </div>
         <div className="w-full max-w-md flex flex-col gap-5 pt-2">
-          {error && (
-            <p className="text-center text-xs text-rose-600">{error}</p>
-          )}
           {/* Sleep first — waking up is the trigger event in the night */}
           <SleepControl events={events} />
           <ActionGrid
@@ -155,9 +140,6 @@ export function HomeClient() {
       </div>
 
       <div className="w-full max-w-md flex flex-col gap-6 pt-4">
-        {error && (
-          <p className="text-center text-xs text-rose-600">{error}</p>
-        )}
 
 {tab === "home" && (
           <>
@@ -200,7 +182,7 @@ export function HomeClient() {
           <>
             <Timeline events={events} insightsView={insightsView} />
             <WeightChart insightsView={insightsView} />
-            <Trends events={events} insightsView={insightsView} />
+            <Trends insightsView={insightsView} />
           </>
         )}
 

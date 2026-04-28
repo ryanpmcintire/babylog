@@ -1,17 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { BabyEvent } from "@/lib/events";
 import { FEVER_THRESHOLD_F, HIGH_FEVER_THRESHOLD_F } from "@/lib/events";
-import { buildDailyBuckets, type DayBucket } from "@/lib/aggregates";
+import { type DayBucket } from "@/lib/aggregates";
 import { useBaby } from "@/lib/useBaby";
 import { dailySleepNorm } from "@/lib/norms";
-import {
-  useExtendedEvents,
-  useDailySummariesRange,
-  SUMMARIES_FLAG_ENABLED,
-  VIEWS_FLAG_ENABLED,
-} from "@/lib/useEvents";
 import { dayKeyOf, type DailySummary } from "@/lib/summaries";
 import type { InsightsView } from "@/lib/views";
 
@@ -58,51 +51,23 @@ function summariesToBuckets(
 }
 
 export function Trends({
-  events: liveEvents,
   insightsView,
 }: {
-  events: BabyEvent[];
   insightsView?: InsightsView | null;
 }) {
   const [days, setDays] = useState(7);
   const baby = useBaby();
-
-  // Three read paths in priority order:
-  //   1. insightsView is loaded — ZERO additional reads, just slice.
-  //   2. summaries flag is on — ~days reads (one per day in the window).
-  //   3. fall through to raw-event bucketing (legacy path).
-  // Gate fallback fetches on VIEWS_FLAG_ENABLED itself (not view-loaded)
-  // so we don't briefly attach a 200-doc listener during the initial
-  // view-loading window on app boot.
-  const { summaries } = useDailySummariesRange(
-    VIEWS_FLAG_ENABLED ? 0 : days,
-  );
-  const { events, loadingMore } = useExtendedEvents(
-    SUMMARIES_FLAG_ENABLED || VIEWS_FLAG_ENABLED ? [] : liveEvents,
-    SUMMARIES_FLAG_ENABLED || VIEWS_FLAG_ENABLED ? 0 : days,
-  );
+  const loadingMore = false;
 
   const buckets = useMemo(() => {
-    if (VIEWS_FLAG_ENABLED && insightsView) {
-      // The view holds INSIGHTS_DAYS=30 days oldest-first; slice the last
-      // `days` entries.
-      const sliced = insightsView.daily_summaries.slice(-days);
-      return summariesToBuckets(sliced, new Date());
-    }
-    if (SUMMARIES_FLAG_ENABLED) {
-      return summariesToBuckets(summaries, new Date());
-    }
-    return buildDailyBuckets(events, days, new Date(), { inferBufferMin: 10 });
-  }, [insightsView, summaries, events, days]);
+    if (!insightsView) return [];
+    // The view holds INSIGHTS_DAYS=30 days oldest-first; slice the last
+    // `days` entries.
+    const sliced = insightsView.daily_summaries.slice(-days);
+    return summariesToBuckets(sliced, new Date());
+  }, [insightsView, days]);
 
-  if (
-    VIEWS_FLAG_ENABLED &&
-    insightsView &&
-    insightsView.daily_summaries.length === 0
-  )
-    return null;
-  if (!SUMMARIES_FLAG_ENABLED && !insightsView && events.length === 0) return null;
-  if (SUMMARIES_FLAG_ENABLED && !insightsView && summaries.length === 0) return null;
+  if (!insightsView || insightsView.daily_summaries.length === 0) return null;
 
   const milk = buckets.map((b) => b.milkMl);
   const sleepHrs = buckets.map((b) => b.sleepMinutes / 60);

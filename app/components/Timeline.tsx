@@ -3,14 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BabyEvent } from "@/lib/events";
 import { FEVER_THRESHOLD_F, HIGH_FEVER_THRESHOLD_F } from "@/lib/events";
-import {
-  buildMarkers,
-  buildSleepSegments,
-  dayKeyOf,
-  type Marker,
-  type SleepSegment,
-} from "@/lib/aggregates";
-import { useExtendedEvents, VIEWS_FLAG_ENABLED } from "@/lib/useEvents";
+import { dayKeyOf, type Marker, type SleepSegment } from "@/lib/aggregates";
 import { EditEventSheet } from "./EditEventSheet";
 
 const AXIS_TICKS = [0, 6, 12, 18, 24];
@@ -38,23 +31,16 @@ function shortDayLabel(d: Date, today: Date): string {
 }
 
 export function Timeline({
-  events: liveEvents,
+  events,
   insightsView,
 }: {
   events: BabyEvent[];
   insightsView?: import("@/lib/views").InsightsView | null;
 }) {
-  // Gate fallback fetches on VIEWS_FLAG_ENABLED itself (not view-loaded
-  // state) so we don't briefly fire useExtendedEvents during the initial
-  // view-loading window on app boot.
-  const useView = VIEWS_FLAG_ENABLED;
-  const viewLoaded = VIEWS_FLAG_ENABLED && insightsView != null;
   const [days, setDays] = useState(7);
   const [tick, setTick] = useState(() => Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);
-  const extended = useExtendedEvents(useView ? [] : liveEvents, useView ? 0 : days);
-  const events = useView ? liveEvents : extended.events;
-  const loadingMore = useView ? false : extended.loadingMore;
+  const loadingMore = false;
   const editingEvent = editingId
     ? events.find((e) => e.id === editingId) ?? null
     : null;
@@ -83,7 +69,7 @@ export function Timeline({
   const { sleepByDay, markersByDay } = useMemo(() => {
     let sleeps: SleepSegment[] = [];
     let markers: Marker[] = [];
-    if (viewLoaded && insightsView) {
+    if (insightsView) {
       const dayKeys = new Set(dayList.map((d) => d.key));
       sleeps = (insightsView.sleep_segments ?? []).filter((s) =>
         dayKeys.has(s.dayKey),
@@ -91,12 +77,7 @@ export function Timeline({
       markers = (insightsView.markers ?? [])
         .filter((m) => m.kind !== "pump")
         .filter((m) => dayKeys.has(m.dayKey));
-    } else if (!useView) {
-      sleeps = buildSleepSegments(events, now, { inferBufferMin: 10 });
-      markers = buildMarkers(events).filter((m) => m.kind !== "pump");
     }
-    // viewLoaded false but useView true → empty arrays (still loading);
-    // user briefly sees an empty timeline until insightsView resolves.
     const sMap = new Map<string, SleepSegment[]>();
     const mMap = new Map<string, Marker[]>();
     for (const s of sleeps) {
@@ -111,15 +92,12 @@ export function Timeline({
     }
     return { sleepByDay: sMap, markersByDay: mMap };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useView, insightsView, events, dayList]);
+  }, [insightsView, dayList]);
 
-  if (!useView && events.length === 0) return null;
-  // When views are on and the view is loaded but truly empty, hide.
-  // While loading, render the chrome with empty rows rather than null.
   if (
-    viewLoaded &&
-    (insightsView?.markers?.length ?? 0) === 0 &&
-    (insightsView?.sleep_segments?.length ?? 0) === 0
+    !insightsView ||
+    ((insightsView.markers?.length ?? 0) === 0 &&
+      (insightsView.sleep_segments?.length ?? 0) === 0)
   )
     return null;
 
@@ -174,7 +152,7 @@ export function Timeline({
       {editingEvent && (
         <EditEventSheet
           event={editingEvent}
-          events={liveEvents}
+          events={events}
           onClose={() => setEditingId(null)}
         />
       )}

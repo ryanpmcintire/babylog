@@ -167,10 +167,11 @@ export function splitSleepMinutes(
 
 // Two breast_feed events are part of the same nursing "session" if their
 // occurred_at values are within this many milliseconds. Used by
-// breastSessionDelta and countLatchedBreastSessions. 30s comfortably
-// covers the typical L-then-R logging cadence (same button tap, or two
-// rapid clicks) without merging genuinely separate feedings.
-export const BREAST_SESSION_MS = 30_000;
+// breastSessionDelta and countLatchedBreastSessions. 5 minutes covers
+// the typical L-then-R logging cadence including realistic delays
+// (mid-feed switch, parent grabbing the phone after baby latches)
+// without merging genuinely separate feedings.
+export const BREAST_SESSION_MS = 5 * 60 * 1000;
 
 // Sum of latched-session counts across the events array. Used by
 // summaryFromDayEvents (which is given today's events only) to compute

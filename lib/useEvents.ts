@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  addDoc,
   collection,
   doc,
   getDoc,
@@ -27,15 +26,12 @@ import {
   deltaForEvent,
   inverseDelta,
   splitSleepMinutes,
-  type DailySummary,
   type SummaryDelta,
 } from "./summaries";
 import {
   applyChangeToInsightsView,
   applyChangeToLibraryView,
   computeHomeView,
-  computeInsightsView,
-  computeLibraryView,
   preserveLatestPointers,
   type HomeView,
   type InsightsView,
@@ -50,20 +46,6 @@ import type {
   Side,
   TempMethod,
 } from "./events";
-
-// Dual-write to households/{hid}/daily_summaries/* gated behind this flag.
-// Default false so prod is unaffected until cutover. Flip to "true" in
-// Vercel env after backfill is run against prod.
-const SUMMARIES_ENABLED =
-  process.env.NEXT_PUBLIC_USE_SUMMARIES === "true";
-
-// Materialized per-screen view docs at households/{hid}/views/{home,insights,library}.
-// When enabled, every event write/edit/delete also rewrites the relevant
-// view docs, so the home page reads exactly one doc and the insights/library
-// tabs read one doc each. Default false so prod stays on the previous read
-// path until Vercel env is flipped.
-const VIEWS_ENABLED =
-  process.env.NEXT_PUBLIC_USE_VIEWS === "true";
 
 // Resolve the household id for a write operation. Throws if the signed-in
 // user has no mapping — should never happen in practice (allowlist gates
@@ -144,7 +126,7 @@ async function stageViewWrites(
   currentEvents: BabyEvent[] | null | undefined,
   change: ViewChange,
 ): Promise<void> {
-  if (!VIEWS_ENABLED) return;
+  
 
   const [homeSnap, insightsSnap, libSnap] = await Promise.all([
     getDoc(homeViewDoc(hid)),
@@ -208,81 +190,6 @@ function deltaToIncrements(delta: SummaryDelta): Record<string, unknown> {
   return out;
 }
 
-export type EventsSource = "new" | null;
-
-// Live listener query is intentionally stable across mounts:
-//   orderBy occurred_at desc, limit N
-// No date filter. Firestore's persistent cache reuses a resume token when
-// the query is identical between sessions, so cache-hit reloads cost 0 reads
-// and only doc changes bill. A dynamic where-clause with Date.now() inside
-// produces a "different" query every mount and forces a full re-sync.
-//
-// Default count: tight when views are on (only feeds the dual-write's
-// projection of changes onto recent state — chart/dashboard renders read
-// the materialized view doc instead). Wider when views are off so the
-// legacy in-memory bucketing path has enough history.
-export function useRecentEvents(
-  maxCount = VIEWS_ENABLED ? 200 : 500,
-): {
-  events: BabyEvent[];
-  loading: boolean;
-  error: string | null;
-  source: EventsSource;
-} {
-  const hid = useHouseholdId();
-  const [events, setEvents] = useState<BabyEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<EventsSource>(null);
-
-  useEffect(() => {
-    if (!hid) return;
-    // Caller can pass maxCount=0 to opt out of attaching the listener
-    // entirely — used when the events array is sourced from a view doc
-    // instead.
-    if (maxCount <= 0) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    const q = query(
-      eventsCollection(hid),
-      orderBy("occurred_at", "desc"),
-      limit(maxCount),
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        if (cancelled) return;
-        const list: BabyEvent[] = [];
-        snap.forEach((d) => {
-          const data = d.data() as Omit<BabyEvent, "id">;
-          if (!data.deleted) {
-            list.push({ ...(data as BabyEvent), id: d.id });
-          }
-        });
-
-        setEvents(list);
-        setSource("new");
-        setLoading(false);
-      },
-      (err) => {
-        if (cancelled) return;
-        setError(err.message);
-        setLoading(false);
-      },
-    );
-
-    return () => {
-      cancelled = true;
-      unsub();
-    };
-  }, [hid, maxCount]);
-
-  return { events, loading, error, source };
-}
-
 export type NewEventPayload =
   | { type: "breast_feed"; outcome: BreastFeedOutcome; side: Side }
   | { type: "bottle_feed"; volume_ml: number; milk_types: MilkType[] }
@@ -339,10 +246,6 @@ export async function writeEvent(
     deleted: false,
   };
 
-  if (!SUMMARIES_ENABLED) {
-    const ref = await addDoc(eventsCollection(hid), eventBase);
-    return ref.id;
-  }
   return writeEventWithSummary(hid, eventBase, payload, now, currentEvents);
 }
 
@@ -351,17 +254,10 @@ export async function softDeleteEvent(
   currentEvents?: BabyEvent[],
 ): Promise<void> {
   const hid = requireHouseholdId();
-  if (!SUMMARIES_ENABLED) {
-    await updateDoc(eventDoc(hid, id), {
-      deleted: true,
-      updated_at: Timestamp.now(),
-    });
-    return;
-  }
   await deleteEventWithSummary(hid, id, currentEvents);
 }
 
-// ---- Dual-write internals (only reached when SUMMARIES_ENABLED) ----
+// ---- Dual-write internals ----
 
 async function writeEventWithSummary(
   hid: string,
@@ -434,12 +330,10 @@ async function writeEventWithSummary(
       );
     }
   }
-  if (VIEWS_ENABLED) {
-    await stageViewWrites(batch, hid, currentEvents, {
-      kind: "insert",
-      event: { ...(eventBase as object), id: newRef.id } as BabyEvent,
-    });
-  }
+  await stageViewWrites(batch, hid, currentEvents, {
+    kind: "insert",
+    event: { ...(eventBase as object), id: newRef.id } as BabyEvent,
+  });
   await batch.commit();
   return newRef.id;
 }
@@ -505,12 +399,10 @@ async function writeSleepEndWithSummary(
     sleep_minutes_by_day: minutesByDay,
   };
   batch.set(newRef, sleepEndEventDoc);
-  if (VIEWS_ENABLED) {
-    await stageViewWrites(batch, hid, currentEvents, {
-      kind: "insert",
-      event: { ...sleepEndEventDoc, id: newRef.id } as unknown as BabyEvent,
-    });
-  }
+  await stageViewWrites(batch, hid, currentEvents, {
+    kind: "insert",
+    event: { ...sleepEndEventDoc, id: newRef.id } as unknown as BabyEvent,
+  });
   await batch.commit();
   return newRef.id;
 }
@@ -528,11 +420,9 @@ async function writeTemperatureWithSummary(
   await runTransaction(getDb(), async (tx) => {
     // All reads must happen before all writes inside a transaction.
     const snap = await tx.get(ref);
-    const homeSnap = VIEWS_ENABLED ? await tx.get(homeViewDoc(hid)) : null;
-    const insightsSnap = VIEWS_ENABLED
-      ? await tx.get(insightsViewDoc(hid))
-      : null;
-    const libSnap = VIEWS_ENABLED ? await tx.get(libraryViewDoc(hid)) : null;
+    const homeSnap = await tx.get(homeViewDoc(hid));
+    const insightsSnap = await tx.get(insightsViewDoc(hid));
+    const libSnap = await tx.get(libraryViewDoc(hid));
     const cur = snap.exists() ? (snap.data() as { maxTempF?: number | null }) : null;
     const newMax =
       cur?.maxTempF == null || payload.temp_f > cur.maxTempF
@@ -544,42 +434,40 @@ async function writeTemperatureWithSummary(
       { merge: true },
     );
     tx.set(newRef, eventBase);
-    if (VIEWS_ENABLED && homeSnap && insightsSnap && libSnap) {
-      const existingHome = homeSnap.exists()
-        ? (homeSnap.data() as HomeView)
-        : null;
-      const existingInsights: InsightsView = insightsSnap.exists()
-        ? (insightsSnap.data() as InsightsView)
-        : { daily_summaries: [], markers: [], sleep_segments: [], weights: [] };
-      const existingLib: LibraryView = libSnap.exists()
-        ? (libSnap.data() as LibraryView)
-        : { books: [], foods: [] };
-      const existingRecent = existingHome?.recent_events ?? [];
-      const byId = new Map<string, BabyEvent>();
-      for (const e of existingRecent) byId.set(e.id, e);
-      for (const e of currentEvents ?? []) byId.set(e.id, e);
-      const change: ViewChange = {
-        kind: "insert",
-        event: { ...eventBase, id: newRef.id } as BabyEvent,
-      };
-      const projected = applyEventChange(Array.from(byId.values()), change);
-      const now = new Date();
-      const home = computeHomeView(projected, now);
-      home.latest = preserveLatestPointers(
-        home.latest,
-        existingHome?.latest,
-        change,
-      );
-      tx.set(homeViewDoc(hid), { ...home, updated_at: Timestamp.now() });
-      tx.set(insightsViewDoc(hid), {
-        ...applyChangeToInsightsView(existingInsights, change, projected, now),
-        updated_at: Timestamp.now(),
-      });
-      tx.set(libraryViewDoc(hid), {
-        ...applyChangeToLibraryView(existingLib, change),
-        updated_at: Timestamp.now(),
-      });
-    }
+    const existingHome = homeSnap.exists()
+      ? (homeSnap.data() as HomeView)
+      : null;
+    const existingInsights: InsightsView = insightsSnap.exists()
+      ? (insightsSnap.data() as InsightsView)
+      : { daily_summaries: [], markers: [], sleep_segments: [], weights: [] };
+    const existingLib: LibraryView = libSnap.exists()
+      ? (libSnap.data() as LibraryView)
+      : { books: [], foods: [] };
+    const existingRecent = existingHome?.recent_events ?? [];
+    const byId = new Map<string, BabyEvent>();
+    for (const e of existingRecent) byId.set(e.id, e);
+    for (const e of currentEvents ?? []) byId.set(e.id, e);
+    const change: ViewChange = {
+      kind: "insert",
+      event: { ...eventBase, id: newRef.id } as BabyEvent,
+    };
+    const projected = applyEventChange(Array.from(byId.values()), change);
+    const now = new Date();
+    const home = computeHomeView(projected, now);
+    home.latest = preserveLatestPointers(
+      home.latest,
+      existingHome?.latest,
+      change,
+    );
+    tx.set(homeViewDoc(hid), { ...home, updated_at: Timestamp.now() });
+    tx.set(insightsViewDoc(hid), {
+      ...applyChangeToInsightsView(existingInsights, change, projected, now),
+      updated_at: Timestamp.now(),
+    });
+    tx.set(libraryViewDoc(hid), {
+      ...applyChangeToLibraryView(existingLib, change),
+      updated_at: Timestamp.now(),
+    });
   });
   return newRef.id;
 }
@@ -630,12 +518,10 @@ async function deleteEventWithSummary(
       );
     }
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
-    if (VIEWS_ENABLED) {
-      await stageViewWrites(batch, hid, currentEvents, {
-        kind: "delete",
-        eventId: id,
-      });
-    }
+    await stageViewWrites(batch, hid, currentEvents, {
+      kind: "delete",
+      eventId: id,
+    });
     await batch.commit();
     return;
   }
@@ -673,12 +559,10 @@ async function deleteEventWithSummary(
       { merge: true },
     );
     batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
-    if (VIEWS_ENABLED) {
-      await stageViewWrites(batch, hid, currentEvents, {
-        kind: "delete",
-        eventId: id,
-      });
-    }
+    await stageViewWrites(batch, hid, currentEvents, {
+      kind: "delete",
+      eventId: id,
+    });
     await batch.commit();
     return;
   }
@@ -722,248 +606,17 @@ async function deleteEventWithSummary(
     }
   }
   batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
-  if (VIEWS_ENABLED) {
-    const deletedEvent =
-      data.type === "breast_feed"
-        ? ({ ...data, id } as unknown as BabyEvent)
-        : undefined;
-    await stageViewWrites(batch, hid, currentEvents, {
-      kind: "delete",
-      eventId: id,
-      ...(deletedEvent ? { event: deletedEvent } : {}),
-    });
-  }
+  const deletedEvent =
+    data.type === "breast_feed"
+      ? ({ ...data, id } as unknown as BabyEvent)
+      : undefined;
+  await stageViewWrites(batch, hid, currentEvents, {
+    kind: "delete",
+    eventId: id,
+    ...(deletedEvent ? { event: deletedEvent } : {}),
+  });
   await batch.commit();
 }
-
-// One-shot fetch of events in a specific [startDate, endDate) window. Used by
-// Timeline/Trends when the user picks a range wider than the live-listener
-// baseline, so we only pay reads for the older slice on demand.
-export async function fetchEventsInRange(
-  startDate: Date,
-  endDate: Date,
-  maxCount = 2000,
-): Promise<BabyEvent[]> {
-  const hid = requireHouseholdId();
-  const q = query(
-    eventsCollection(hid),
-    where("occurred_at", ">=", Timestamp.fromDate(startDate)),
-    where("occurred_at", "<", Timestamp.fromDate(endDate)),
-    orderBy("occurred_at", "desc"),
-    limit(maxCount),
-  );
-  const snap = await getDocs(q);
-  const list: BabyEvent[] = [];
-  snap.forEach((d) => {
-    const data = d.data() as Omit<BabyEvent, "id">;
-    if (!data.deleted) list.push({ ...(data as BabyEvent), id: d.id });
-  });
-  return list;
-}
-
-// Given the set of "live" events (count-limited listener feed) and a requested
-// range in days, extend with a one-shot fetch of the older slice if needed.
-// Coverage is derived from the actual oldest live event, not a hardcoded
-// liveDays assumption — so this still works correctly with a limit-only
-// listener whose coverage varies with event volume.
-//
-// The returned list is newest-first and deduped by id.
-export function useExtendedEvents(
-  liveEvents: BabyEvent[],
-  days: number,
-): { events: BabyEvent[]; loadingMore: boolean } {
-  const [older, setOlder] = useState<BabyEvent[]>([]);
-  const [loadingMore, setLoadingMore] = useState(false);
-
-  // Round the live coverage and requested range to day boundaries so the
-  // effect doesn't re-fire every render due to Date.now() jitter.
-  const oldestLiveDay =
-    liveEvents.length > 0
-      ? Math.floor(
-          liveEvents[liveEvents.length - 1]!.occurred_at.toMillis() / 86400000,
-        )
-      : Math.floor(Date.now() / 86400000);
-  const requestedStartDay =
-    Math.floor(Date.now() / 86400000) - days;
-
-  useEffect(() => {
-    if (oldestLiveDay <= requestedStartDay) {
-      setOlder([]);
-      return;
-    }
-    let cancelled = false;
-    const windowEnd = new Date(oldestLiveDay * 86400000);
-    const windowStart = new Date(requestedStartDay * 86400000);
-    setLoadingMore(true);
-    fetchEventsInRange(windowStart, windowEnd)
-      .then((events) => {
-        if (!cancelled) {
-          setOlder(events);
-          setLoadingMore(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setLoadingMore(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [oldestLiveDay, requestedStartDay]);
-
-  // Merge live + older, deduping on id. Live wins on conflict so a live
-  // edit is preferred over the older snapshot.
-  const byId = new Map<string, BabyEvent>();
-  for (const e of older) byId.set(e.id, e);
-  for (const e of liveEvents) byId.set(e.id, e);
-  const merged = Array.from(byId.values()).sort(
-    (a, b) => b.occurred_at.toMillis() - a.occurred_at.toMillis(),
-  );
-  return { events: merged, loadingMore };
-}
-
-// Live listener for events of a specific type. Used for sparse types
-// (weights, books, foods, medications) that would be crowded out of the
-// main count-limited listener by frequent feeds/diapers/sleep.
-//
-// The query is stable — type is a literal, limit is fixed, and ordering is
-// deterministic. So persistent cache + resume tokens reuse the listen
-// across mounts and only changed docs are billed.
-export function useEventsByType<T extends BabyEvent["type"]>(
-  type: T,
-  maxCount = 200,
-): Extract<BabyEvent, { type: T }>[] {
-  const hid = useHouseholdId();
-  const [items, setItems] = useState<Extract<BabyEvent, { type: T }>[]>([]);
-
-  useEffect(() => {
-    if (!hid) return;
-    // Caller can pass maxCount=0 to opt out entirely (e.g. when reading
-    // the same data from a materialized view doc instead).
-    if (maxCount <= 0) return;
-    const q = query(
-      eventsCollection(hid),
-      where("type", "==", type),
-      orderBy("occurred_at", "desc"),
-      limit(maxCount),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const list: Extract<BabyEvent, { type: T }>[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as Omit<BabyEvent, "id">;
-        if (!data.deleted) {
-          list.push({
-            ...(data as Extract<BabyEvent, { type: T }>),
-            id: d.id,
-          });
-        }
-      });
-      setItems(list);
-    });
-    return unsub;
-  }, [hid, type, maxCount]);
-
-  return items;
-}
-
-// Backward-compatible thin wrapper. Pass enabled=false to skip the
-// underlying listener attachment entirely (used when the caller is
-// reading weights from the materialized insights view doc instead).
-export function useAllWeights(enabled = true): BabyEvent[] {
-  return useEventsByType("weight", enabled ? 200 : 0);
-}
-
-// Live listener over a [today - days + 1, today] range of daily summary
-// docs. Returns an array of N entries (oldest first) padded with empty
-// summaries for days that have no doc yet. Charts read from this to avoid
-// pulling raw events.
-//
-// Only attaches when SUMMARIES_ENABLED is true. Call sites should fall
-// back to raw-event bucketing when the flag is off.
-export function useDailySummariesRange(
-  days: number,
-): { summaries: DailySummary[]; loading: boolean } {
-  const hid = useHouseholdId();
-  const [summaries, setSummaries] = useState<DailySummary[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const todayKey = dayKeyOf(new Date());
-
-  useEffect(() => {
-    if (!SUMMARIES_ENABLED || !hid) {
-      setSummaries([]);
-      setLoading(false);
-      return;
-    }
-    const today = new Date();
-    const start = new Date(today);
-    start.setDate(start.getDate() - (days - 1));
-    const startKey = dayKeyOf(start);
-
-    const col = collection(getDb(), "households", hid, "daily_summaries");
-    const q = query(
-      col,
-      where("__name__", ">=", startKey),
-      where("__name__", "<=", todayKey),
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const byKey = new Map<string, DailySummary>();
-      snap.forEach((d) => {
-        const raw = d.data() as Partial<DailySummary>;
-        // Incremental dual-writes only set the fields they touched; coerce
-        // missing fields to safe defaults so downstream consumers don't see
-        // undefined.
-        byKey.set(d.id, {
-          dayKey: d.id,
-          feeds: raw.feeds ?? 0,
-          breast_feeds: raw.breast_feeds ?? 0,
-          bottle_feeds: raw.bottle_feeds ?? 0,
-          pump_count: raw.pump_count ?? 0,
-          milkMl: raw.milkMl ?? 0,
-          pumpMl: raw.pumpMl ?? 0,
-          diapers: raw.diapers ?? 0,
-          wets: raw.wets ?? 0,
-          dirties: raw.dirties ?? 0,
-          mixeds: raw.mixeds ?? 0,
-          meds: raw.meds ?? 0,
-          sleepMinutes: raw.sleepMinutes ?? 0,
-          maxTempF: raw.maxTempF ?? null,
-        });
-      });
-      const out: DailySummary[] = [];
-      for (let i = days - 1; i >= 0; i--) {
-        const d = new Date(today);
-        d.setDate(d.getDate() - i);
-        const k = dayKeyOf(d);
-        out.push(
-          byKey.get(k) ?? {
-            dayKey: k,
-            feeds: 0,
-            breast_feeds: 0,
-            bottle_feeds: 0,
-            pump_count: 0,
-            milkMl: 0,
-            pumpMl: 0,
-            diapers: 0,
-            wets: 0,
-            dirties: 0,
-            mixeds: 0,
-            meds: 0,
-            sleepMinutes: 0,
-            maxTempF: null,
-          },
-        );
-      }
-      setSummaries(out);
-      setLoading(false);
-    });
-    return unsub;
-  }, [hid, days, todayKey]);
-
-  return { summaries, loading };
-}
-
-export const SUMMARIES_FLAG_ENABLED = SUMMARIES_ENABLED;
-export const VIEWS_FLAG_ENABLED = VIEWS_ENABLED;
 
 // Live listener on the home view doc. Returns null until the first snapshot.
 // One Firestore read per cold cache attach (or 0 with a valid resume token);
@@ -977,7 +630,7 @@ export function useHomeView(): {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!VIEWS_ENABLED || !hid) {
+    if (!hid) {
       setLoading(false);
       return;
     }
@@ -1005,7 +658,7 @@ export function useInsightsView(): {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!VIEWS_ENABLED || !hid) {
+    if (!hid) {
       setLoading(false);
       return;
     }
@@ -1033,7 +686,7 @@ export function useLibraryView(): {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!VIEWS_ENABLED || !hid) {
+    if (!hid) {
       setLoading(false);
       return;
     }
@@ -1080,10 +733,6 @@ export async function updateEvent(
   };
   if (occurred_at) update.occurred_at = Timestamp.fromDate(occurred_at);
 
-  if (!SUMMARIES_ENABLED) {
-    await updateDoc(eventDoc(hid, id), update);
-    return;
-  }
   await updateEventWithSummary(hid, id, patch, update, currentEvents);
 }
 
@@ -1179,7 +828,7 @@ async function updateEventWithSummary(
       );
     }
     batch.update(ref, { ...flatUpdate, sleep_minutes_by_day: newMap });
-    if (VIEWS_ENABLED) {
+    {
       const updated = projectUpdatedEvent(old, id, flatUpdate, {
         sleep_minutes_by_day: newMap,
       });
@@ -1227,7 +876,7 @@ async function updateEventWithSummary(
         { merge: true },
       );
     }
-    if (VIEWS_ENABLED) {
+    {
       const updated = projectUpdatedEvent(old, id, flatUpdate);
       await stageViewWrites(batch, hid, currentEvents, {
         kind: "replace",
@@ -1278,7 +927,7 @@ async function updateEventWithSummary(
     );
   }
   batch.update(ref, flatUpdate);
-  if (VIEWS_ENABLED) {
+  {
     const updated = projectUpdatedEvent(old, id, flatUpdate);
     await stageViewWrites(batch, hid, currentEvents, {
       kind: "replace",

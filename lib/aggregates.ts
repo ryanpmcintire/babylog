@@ -178,7 +178,7 @@ export function buildDailyBuckets(
   // Breast feeds: count latched sessions per bucket. A session is a
   // group of breast_feed events within BREAST_SESSION_MS of each other;
   // it counts as 1 feeding if any event in the group latched.
-  const SESSION_MS = 30_000;
+  const SESSION_MS = 5 * 60 * 1000;
   const breastByDay = new Map<string, BabyEvent[]>();
   for (const e of events) {
     if (e.type !== "breast_feed") continue;

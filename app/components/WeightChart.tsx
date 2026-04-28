@@ -5,11 +5,7 @@ import { formatWeightGrams } from "@/lib/events";
 import { useBaby } from "@/lib/useBaby";
 import { weightPercentileGrams } from "@/lib/norms";
 import { useBoolPref } from "@/lib/prefs";
-import {
-  useAllWeights,
-  VIEWS_FLAG_ENABLED,
-  writeEvent,
-} from "@/lib/useEvents";
+import { writeEvent } from "@/lib/useEvents";
 import type { InsightsView } from "@/lib/views";
 import { Sheet } from "./Sheet";
 
@@ -40,35 +36,18 @@ export function WeightChart({
   const [hovered, setHovered] = useState<WeightPoint | null>(null);
   const [showCurves] = useBoolPref("showGrowthCurves");
   const [logOpen, setLogOpen] = useState(false);
-  // Skip the dedicated weights listener entirely when views are enabled —
-  // weights live inside insightsView.weights as a single small array.
-  // Important: gate on VIEWS_FLAG_ENABLED, not (flag && view-loaded), so
-  // we don't briefly attach a 200-doc listener during the initial view-
-  // loading window on app boot.
-  const useView = VIEWS_FLAG_ENABLED;
-  const weightEvents = useAllWeights(!VIEWS_FLAG_ENABLED);
   const baby = useBaby();
 
   const points = useMemo<WeightPoint[]>(() => {
     const weights: WeightPoint[] = [];
-    if (useView && insightsView) {
-      for (const w of insightsView.weights ?? []) {
-        const d = new Date(w.at);
-        const dayOfLife =
-          (d.getTime() - baby.birthdate.getTime()) / (1000 * 60 * 60 * 24);
-        weights.push({ date: d, grams: w.weight_grams, dayOfLife });
-      }
-    } else {
-      for (const e of weightEvents) {
-        if (e.type !== "weight") continue;
-        const d = e.occurred_at.toDate();
-        const dayOfLife =
-          (d.getTime() - baby.birthdate.getTime()) / (1000 * 60 * 60 * 24);
-        weights.push({ date: d, grams: e.weight_grams, dayOfLife });
-      }
+    for (const w of insightsView?.weights ?? []) {
+      const d = new Date(w.at);
+      const dayOfLife =
+        (d.getTime() - baby.birthdate.getTime()) / (1000 * 60 * 60 * 24);
+      weights.push({ date: d, grams: w.weight_grams, dayOfLife });
     }
     return weights.sort((a, b) => a.dayOfLife - b.dayOfLife);
-  }, [useView, insightsView, weightEvents, baby.birthdate]);
+  }, [insightsView, baby.birthdate]);
 
   const latest = points.length > 0 ? points[points.length - 1]! : null;
 
