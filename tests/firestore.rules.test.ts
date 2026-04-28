@@ -193,10 +193,13 @@ test("client cannot write to household doc directly", async () => {
   );
 });
 
-test("legacy events readable by allowlist member, not writable", async () => {
+test("top-level legacy events path is denied for everyone after Phase B cleanup", async () => {
+  // The legacy /events/{id} rules were removed once the migration to
+  // households/{hid}/events finished and the top-level collection was
+  // deleted. Both reads and writes there must now hit the default-deny.
   await env.withSecurityRulesDisabled(async (ctx) => {
     const adb = ctx.firestore();
-    await setDoc(doc(adb, "events", "legacy-1"), {
+    await setDoc(doc(adb, "events", "phantom"), {
       type: "diaper_wet",
       occurred_at: Timestamp.now(),
       created_by: MEMBER_UID,
@@ -205,7 +208,7 @@ test("legacy events readable by allowlist member, not writable", async () => {
   });
 
   const memberDb = memberCtx().firestore();
-  await assertSucceeds(getDoc(doc(memberDb, "events", "legacy-1")));
+  await assertFails(getDoc(doc(memberDb, "events", "phantom")));
   await assertFails(
     addDoc(collection(memberDb, "events"), {
       type: "diaper_wet",
@@ -215,7 +218,4 @@ test("legacy events readable by allowlist member, not writable", async () => {
       deleted: false,
     }),
   );
-
-  const strangerDb = nonMemberCtx().firestore();
-  await assertFails(getDoc(doc(strangerDb, "events", "legacy-1")));
 });

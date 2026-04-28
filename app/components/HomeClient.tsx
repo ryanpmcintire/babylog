@@ -159,14 +159,7 @@ export function HomeClient() {
           <p className="text-center text-xs text-rose-600">{error}</p>
         )}
 
-        {source === "legacy" && (
-          <div className="rounded-2xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-2 text-xs text-amber-900 dark:text-amber-200">
-            ⚠️ Reading legacy data — household migration hasn&apos;t completed.
-            New events you log may not appear here.
-          </div>
-        )}
-
-        {tab === "home" && (
+{tab === "home" && (
           <>
             <Dashboard events={events} homeView={homeView} />
             <TodayClock events={events} />

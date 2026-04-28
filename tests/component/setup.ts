@@ -12,16 +12,31 @@ import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
 
 // Spy implementations for the imperative event API. Tests reset and
-// inspect them via the exported helpers below.
-export const mockWriteEvent = vi.fn(async () => "mock-event-id");
-export const mockUpdateEvent = vi.fn(async () => undefined);
-export const mockSoftDeleteEvent = vi.fn(async () => undefined);
+// inspect them via the exported helpers below. Typed with the same
+// signatures as the production functions so mock.calls indexes are
+// type-safe in test assertions.
+import type { writeEvent, updateEvent, softDeleteEvent } from "@/lib/useEvents";
+export const mockWriteEvent = vi.fn<typeof writeEvent>(async () => "mock-event-id");
+export const mockUpdateEvent = vi.fn<typeof updateEvent>(async () => undefined);
+export const mockSoftDeleteEvent = vi.fn<typeof softDeleteEvent>(
+  async () => undefined,
+);
 
 // View hooks default to returning null (loading state). Tests can
-// override with mockUseHomeView.mockReturnValue(...) etc.
-export const mockUseHomeView = vi.fn(() => ({ view: null, loading: true }));
-export const mockUseInsightsView = vi.fn(() => ({ view: null, loading: true }));
-export const mockUseLibraryView = vi.fn(() => ({ view: null, loading: true }));
+// override with mockUseHomeView.mockReturnValue(...) etc. Typed to
+// accept any view shape so test setups don't have to fight TS.
+import type { HomeView, InsightsView, LibraryView } from "@/lib/views";
+type ViewHookReturn<T> = { view: T | null; loading: boolean };
+export const mockUseHomeView = vi.fn<() => ViewHookReturn<HomeView>>(() => ({
+  view: null,
+  loading: true,
+}));
+export const mockUseInsightsView = vi.fn<() => ViewHookReturn<InsightsView>>(
+  () => ({ view: null, loading: true }),
+);
+export const mockUseLibraryView = vi.fn<() => ViewHookReturn<LibraryView>>(
+  () => ({ view: null, loading: true }),
+);
 
 vi.mock("@/lib/firebase", () => ({
   getDb: vi.fn(() => ({})),

@@ -207,13 +207,7 @@ function deltaToIncrements(delta: SummaryDelta): Record<string, unknown> {
   return out;
 }
 
-// Old top-level events path. Read-only fallback during the Phase B transition
-// window. Remove once the legacy collection is deleted.
-function legacyEventsCollection() {
-  return collection(getDb(), "events");
-}
-
-export type EventsSource = "new" | "legacy" | null;
+export type EventsSource = "new" | null;
 
 // Live listener query is intentionally stable across mounts:
 //   orderBy occurred_at desc, limit N
@@ -250,7 +244,6 @@ export function useRecentEvents(
       return;
     }
     let cancelled = false;
-    let triedLegacyFallback = false;
     const q = query(
       eventsCollection(hid),
       orderBy("occurred_at", "desc"),
@@ -259,7 +252,7 @@ export function useRecentEvents(
 
     const unsub = onSnapshot(
       q,
-      async (snap) => {
+      (snap) => {
         if (cancelled) return;
         const list: BabyEvent[] = [];
         snap.forEach((d) => {
@@ -268,43 +261,6 @@ export function useRecentEvents(
             list.push({ ...(data as BabyEvent), id: d.id });
           }
         });
-
-        // Legacy fallback: only fire when we have a SERVER-confirmed empty
-        // result (not a cache miss with no cached data) and we haven't
-        // tried it yet this mount. This was the runaway-reads source —
-        // cache-only empties were re-triggering legacy fetches every
-        // session, paying for ~320 docs each time.
-        if (
-          list.length === 0 &&
-          !triedLegacyFallback &&
-          !snap.metadata.fromCache
-        ) {
-          triedLegacyFallback = true;
-          try {
-            const legacyQ = query(
-              legacyEventsCollection(),
-              orderBy("occurred_at", "desc"),
-              limit(maxCount),
-            );
-            const legacySnap = await getDocs(legacyQ);
-            if (cancelled) return;
-            if (!legacySnap.empty) {
-              const legacyList: BabyEvent[] = [];
-              legacySnap.forEach((d) => {
-                const data = d.data() as Omit<BabyEvent, "id">;
-                if (!data.deleted) {
-                  legacyList.push({ ...(data as BabyEvent), id: d.id });
-                }
-              });
-              setEvents(legacyList);
-              setSource("legacy");
-              setLoading(false);
-              return;
-            }
-          } catch {
-            /* legacy may be denied — fine */
-          }
-        }
 
         setEvents(list);
         setSource("new");
