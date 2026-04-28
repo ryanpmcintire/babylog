@@ -92,14 +92,16 @@ export function deltaForEvent(
   event: Pick<BabyEvent, "type"> & Partial<BabyEvent>,
 ): SummaryDelta | null {
   switch (event.type) {
-    case "breast_feed": {
-      // A breast event with outcome=no_latch is logged so the parent
-      // can track the attempt, but it doesn't count as a feeding for
-      // count purposes (today's feeds, summary feeds, breast_feeds).
-      const outcome = (event as { outcome?: string }).outcome;
-      if (outcome === "no_latch") return null;
-      return { feeds: 1, breast_feeds: 1 };
-    }
+    case "breast_feed":
+      // Breast feeds are SESSION-counted, not per-event. L and R sides
+      // are typically logged within a few seconds of each other and
+      // collectively count as 1 nursing session — counted once if any
+      // side latched, zero if both were no_latch. The session delta
+      // requires neighbor-event context that this per-event helper
+      // doesn't have, so deltaForEvent returns null for breast_feed
+      // and the dual-write computes the session-level delta separately
+      // via breastSessionDelta() below.
+      return null;
     case "bottle_feed":
       return {
         feeds: 1,
@@ -163,6 +165,87 @@ export function splitSleepMinutes(
   return out;
 }
 
+// Two breast_feed events are part of the same nursing "session" if their
+// occurred_at values are within this many milliseconds. Used by
+// breastSessionDelta and countLatchedBreastSessions. 30s comfortably
+// covers the typical L-then-R logging cadence (same button tap, or two
+// rapid clicks) without merging genuinely separate feedings.
+export const BREAST_SESSION_MS = 30_000;
+
+// Sum of latched-session counts across the events array. Used by
+// summaryFromDayEvents (which is given today's events only) to compute
+// the breast-side contribution to feeds/breast_feeds.
+export function countLatchedBreastSessions(events: BabyEvent[]): number {
+  const breast = events
+    .filter((e) => e.type === "breast_feed")
+    .sort((a, b) => a.occurred_at.toMillis() - b.occurred_at.toMillis());
+  let count = 0;
+  let i = 0;
+  while (i < breast.length) {
+    const sessionStart = breast[i]!.occurred_at.toMillis();
+    let j = i;
+    while (
+      j < breast.length &&
+      breast[j]!.occurred_at.toMillis() - sessionStart <= BREAST_SESSION_MS
+    ) {
+      j++;
+    }
+    const anyLatched = breast.slice(i, j).some(
+      (e) =>
+        e.type === "breast_feed" &&
+        (e as Extract<BabyEvent, { type: "breast_feed" }>).outcome !== "no_latch",
+    );
+    if (anyLatched) count += 1;
+    i = j;
+  }
+  return count;
+}
+
+// Incremental session-count change for a breast_feed insert or delete.
+// Returns +1 / 0 / -1 — the amount to add to feeds and breast_feeds.
+//
+// `currentEvents` should be the array as it exists BEFORE the change is
+// applied (for both insert and delete). For insert: events that share a
+// session with the new event. For delete: same shape; we look up the
+// deleted event's session by id.
+export function breastSessionDelta(
+  change:
+    | { kind: "insert"; event: BabyEvent }
+    | { kind: "delete"; event: BabyEvent },
+  currentEvents: BabyEvent[],
+): number {
+  const target = change.event;
+  if (target.type !== "breast_feed") return 0;
+  const targetTime = target.occurred_at.toMillis();
+  // Other breast_feed events within session window of the target.
+  const sameSessionOthers = currentEvents.filter(
+    (e) =>
+      e.id !== target.id &&
+      e.type === "breast_feed" &&
+      Math.abs(e.occurred_at.toMillis() - targetTime) <= BREAST_SESSION_MS,
+  ) as Extract<BabyEvent, { type: "breast_feed" }>[];
+  const othersHaveLatched = sameSessionOthers.some(
+    (e) => e.outcome !== "no_latch",
+  );
+  const targetIsLatched =
+    (target as Extract<BabyEvent, { type: "breast_feed" }>).outcome !==
+    "no_latch";
+
+  // For insert: before = othersHaveLatched (session without target);
+  //             after  = othersHaveLatched || targetIsLatched.
+  // For delete: before = othersHaveLatched || targetIsLatched;
+  //             after  = othersHaveLatched.
+  if (change.kind === "insert") {
+    const before = othersHaveLatched ? 1 : 0;
+    const after = othersHaveLatched || targetIsLatched ? 1 : 0;
+    return after - before;
+  }
+  // delete
+  const before = othersHaveLatched || targetIsLatched ? 1 : 0;
+  const after = othersHaveLatched ? 1 : 0;
+  return after - before;
+}
+
 // Re-derive a full DailySummary from a list of events that all fall on
 // the same day. Used by the backfill script and as a recompute path for
 // deletions of temperature events (where max can't be inverted).
@@ -210,5 +293,11 @@ export function summaryFromDayEvents(
     if (d.mixeds) s.mixeds += d.mixeds;
     if (d.meds) s.meds += d.meds;
   }
+  // Breast feeds count by SESSION, not by event — see deltaForEvent for
+  // the rationale. Each latched session contributes 1 to feeds and to
+  // breast_feeds.
+  const breastSessionCount = countLatchedBreastSessions(events);
+  s.feeds += breastSessionCount;
+  s.breast_feeds += breastSessionCount;
   return s;
 }

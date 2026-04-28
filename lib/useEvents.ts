@@ -22,6 +22,7 @@ import { getDb, getFirebaseAuth } from "./firebase";
 import { getHouseholdIdForEmail } from "./household";
 import { useHouseholdId } from "./useHousehold";
 import {
+  breastSessionDelta,
   dayKeyOf,
   deltaForEvent,
   inverseDelta,
@@ -400,13 +401,38 @@ async function writeEventWithSummary(
   const delta = deltaForEvent({ type: payload.type, ...(payload as object) });
   const batch = writeBatch(getDb());
   batch.set(newRef, eventBase);
+  const dayKey = dayKeyOf(occurredAt);
   if (delta) {
-    const dayKey = dayKeyOf(occurredAt);
     batch.set(
       summaryDoc(hid, dayKey),
       { dayKey, ...deltaToIncrements(delta), updated_at: Timestamp.now() },
       { merge: true },
     );
+  }
+  // Breast feeds are session-counted, not per-event. Compute the
+  // session-aware delta and apply it to the summary collection too,
+  // so daily_summaries.{feeds,breast_feeds} stays consistent with
+  // insightsView's incremental count.
+  if (payload.type === "breast_feed" && currentEvents) {
+    const sessionDelta = breastSessionDelta(
+      {
+        kind: "insert",
+        event: { ...(eventBase as object), id: newRef.id } as BabyEvent,
+      },
+      currentEvents,
+    );
+    if (sessionDelta !== 0) {
+      batch.set(
+        summaryDoc(hid, dayKey),
+        {
+          dayKey,
+          feeds: increment(sessionDelta),
+          breast_feeds: increment(sessionDelta),
+          updated_at: Timestamp.now(),
+        },
+        { merge: true },
+      );
+    }
   }
   if (VIEWS_ENABLED) {
     await stageViewWrites(batch, hid, currentEvents, {
@@ -674,11 +700,37 @@ async function deleteEventWithSummary(
       { merge: true },
     );
   }
+  // Breast-session delete: decrement feeds/breast_feeds only if removing
+  // this event empties the latched-session count for its session.
+  if (data.type === "breast_feed" && currentEvents) {
+    const deletedEvent = { ...data, id } as unknown as BabyEvent;
+    const sessionDelta = breastSessionDelta(
+      { kind: "delete", event: deletedEvent },
+      currentEvents,
+    );
+    if (sessionDelta !== 0) {
+      batch.set(
+        summaryDoc(hid, dayKey),
+        {
+          dayKey,
+          feeds: increment(sessionDelta),
+          breast_feeds: increment(sessionDelta),
+          updated_at: Timestamp.now(),
+        },
+        { merge: true },
+      );
+    }
+  }
   batch.update(ref, { deleted: true, updated_at: Timestamp.now() });
   if (VIEWS_ENABLED) {
+    const deletedEvent =
+      data.type === "breast_feed"
+        ? ({ ...data, id } as unknown as BabyEvent)
+        : undefined;
     await stageViewWrites(batch, hid, currentEvents, {
       kind: "delete",
       eventId: id,
+      ...(deletedEvent ? { event: deletedEvent } : {}),
     });
   }
   await batch.commit();

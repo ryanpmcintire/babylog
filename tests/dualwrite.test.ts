@@ -695,80 +695,107 @@ test("end-to-end: a typical day of mixed events leaves view consistent", async (
   assert.strictEqual(view!.today.maxTempF, todayEntry!.maxTempF);
 });
 
-test("breast_feed with outcome=no_latch is NOT counted as a feeding", async () => {
-  // Logged so the parent can track the attempt, but counters skip it.
-  await writeEvent(
-    { type: "breast_feed", outcome: "no_latch", side: "left" },
-    new Date(),
-    [],
-  );
-
-  const today = new Date();
-  const dk = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, "0")}-${today.getDate().toString().padStart(2, "0")}`;
-
-  // Daily summary collection: no feeds increment.
-  const sumSnap = await getDoc(
-    doc(db, "households", HID, "daily_summaries", dk),
-  );
-  if (sumSnap.exists()) {
-    const s = sumSnap.data() as { feeds?: number; breast_feeds?: number };
-    assert.strictEqual(s.feeds ?? 0, 0, "feeds must stay 0 for no_latch");
-    assert.strictEqual(s.breast_feeds ?? 0, 0);
-  }
-
-  // homeView.today: feeds 0.
-  const view = await readHomeView();
-  assert.ok(view);
-  assert.strictEqual(view!.today.feeds, 0);
-  assert.strictEqual(view!.today.breast_feeds, 0);
-
-  // recent_feeds (used for next-feed prediction) excludes no_latch.
-  assert.strictEqual(view!.recent_feeds.length, 0);
-
-  // The event itself IS in recent_events — parent can still see/edit it.
-  assert.strictEqual(view!.recent_events.length, 1);
-});
-
-test("breast_feed mix: latched events count, no_latch don't", async () => {
+test("breast_feed: L+R latched in same session counts as 1 feeding", async () => {
+  // L and R logged ~simultaneously (typical UI flow). Session counts
+  // as 1 feeding because at least one side latched.
+  const when = new Date();
   let events: BabyEvent[] = [];
   await writeEvent(
     { type: "breast_feed", outcome: "latched_fed", side: "left" },
-    new Date(),
+    when,
+    events,
+  );
+  events = await readEvents();
+  await writeEvent(
+    { type: "breast_feed", outcome: "latched_fed", side: "right" },
+    when,
+    events,
+  );
+
+  const view = await readHomeView();
+  assert.ok(view);
+  assert.strictEqual(view!.today.feeds, 1);
+  assert.strictEqual(view!.today.breast_feeds, 1);
+
+  // The summary collection should agree.
+  const today = new Date();
+  const dk = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, "0")}-${today.getDate().toString().padStart(2, "0")}`;
+  const sumSnap = await getDoc(
+    doc(db, "households", HID, "daily_summaries", dk),
+  );
+  const s = sumSnap.data() as { feeds: number; breast_feeds: number };
+  assert.strictEqual(s.feeds, 1);
+  assert.strictEqual(s.breast_feeds, 1);
+});
+
+test("breast_feed: L+R both no_latch counts as 0 feedings", async () => {
+  const when = new Date();
+  let events: BabyEvent[] = [];
+  await writeEvent(
+    { type: "breast_feed", outcome: "no_latch", side: "left" },
+    when,
     events,
   );
   events = await readEvents();
   await writeEvent(
     { type: "breast_feed", outcome: "no_latch", side: "right" },
-    new Date(),
-    events,
-  );
-  events = await readEvents();
-  await writeEvent(
-    { type: "breast_feed", outcome: "latched_brief", side: "left" },
-    new Date(),
+    when,
     events,
   );
 
   const view = await readHomeView();
   assert.ok(view);
-  // 2 latched events count, 1 no_latch doesn't.
+  assert.strictEqual(view!.today.feeds, 0);
+  assert.strictEqual(view!.today.breast_feeds, 0);
+
+  // Both events are still in recent_events (logged for History/Timeline).
+  assert.strictEqual(view!.recent_events.length, 2);
+});
+
+test("breast_feed: no_latch followed by latched in same session = 1 feeding", async () => {
+  const when = new Date();
+  let events: BabyEvent[] = [];
+  await writeEvent(
+    { type: "breast_feed", outcome: "no_latch", side: "left" },
+    when,
+    events,
+  );
+  events = await readEvents();
+  // Session was 0; now inserting a latched flips it to 1.
+  await writeEvent(
+    { type: "breast_feed", outcome: "latched_fed", side: "right" },
+    when,
+    events,
+  );
+
+  const view = await readHomeView();
+  assert.ok(view);
+  assert.strictEqual(view!.today.feeds, 1);
+  assert.strictEqual(view!.today.breast_feeds, 1);
+});
+
+test("breast_feed: two separate sessions hours apart count as 2 feedings", async () => {
+  let events: BabyEvent[] = [];
+  const morning = new Date();
+  morning.setHours(8, 0, 0, 0);
+  await writeEvent(
+    { type: "breast_feed", outcome: "latched_fed", side: "left" },
+    morning,
+    events,
+  );
+  events = await readEvents();
+  const noon = new Date();
+  noon.setHours(12, 0, 0, 0);
+  await writeEvent(
+    { type: "breast_feed", outcome: "latched_fed", side: "right" },
+    noon,
+    events,
+  );
+
+  const view = await readHomeView();
+  assert.ok(view);
   assert.strictEqual(view!.today.feeds, 2);
   assert.strictEqual(view!.today.breast_feeds, 2);
-  // recent_feeds skips no_latch too.
-  assert.strictEqual(view!.recent_feeds.length, 2);
-
-  const today = new Date();
-  const dk = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, "0")}-${today.getDate().toString().padStart(2, "0")}`;
-  const insSnap = await getDoc(
-    doc(db, "households", HID, "views", "insights"),
-  );
-  const ins = insSnap.data() as {
-    daily_summaries: { dayKey: string; feeds: number; breast_feeds: number }[];
-  };
-  const t = ins.daily_summaries.find((d) => d.dayKey === dk);
-  assert.ok(t);
-  assert.strictEqual(t!.feeds, 2, "insightsView increment skips no_latch too");
-  assert.strictEqual(t!.breast_feeds, 2);
 });
 
 test("rapid serial writes (5 events with stale events array) all land", async () => {

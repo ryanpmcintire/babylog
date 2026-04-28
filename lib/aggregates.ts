@@ -119,9 +119,8 @@ export function buildDailyBuckets(
         b.feeds += 1;
         break;
       case "breast_feed":
-        // Skip no-latch attempts — logged but don't count as a feeding.
-        if (e.outcome === "no_latch") break;
-        b.feeds += 1;
+        // Breast feeds are session-counted post-loop, not per event.
+        // See countLatchedBreastSessions in lib/summaries.ts.
         break;
       case "pump":
         b.pumpMl += e.volume_ml;
@@ -173,6 +172,44 @@ export function buildDailyBuckets(
       if (overlapEnd > overlapStart) {
         b.sleepMinutes += (overlapEnd - overlapStart) / 60000;
       }
+    }
+  }
+
+  // Breast feeds: count latched sessions per bucket. A session is a
+  // group of breast_feed events within BREAST_SESSION_MS of each other;
+  // it counts as 1 feeding if any event in the group latched.
+  const SESSION_MS = 30_000;
+  const breastByDay = new Map<string, BabyEvent[]>();
+  for (const e of events) {
+    if (e.type !== "breast_feed") continue;
+    const k = dayKey(e.occurred_at.toDate());
+    const arr = breastByDay.get(k) ?? [];
+    arr.push(e);
+    breastByDay.set(k, arr);
+  }
+  for (const b of buckets) {
+    const k = dayKey(b.date);
+    const breast = (breastByDay.get(k) ?? []).slice().sort(
+      (a, c) => a.occurred_at.toMillis() - c.occurred_at.toMillis(),
+    );
+    let i = 0;
+    while (i < breast.length) {
+      const start = breast[i]!.occurred_at.toMillis();
+      let j = i;
+      while (
+        j < breast.length &&
+        breast[j]!.occurred_at.toMillis() - start <= SESSION_MS
+      ) {
+        j++;
+      }
+      const anyLatched = breast.slice(i, j).some(
+        (e) =>
+          e.type === "breast_feed" &&
+          (e as Extract<BabyEvent, { type: "breast_feed" }>).outcome !==
+            "no_latch",
+      );
+      if (anyLatched) b.feeds += 1;
+      i = j;
     }
   }
 

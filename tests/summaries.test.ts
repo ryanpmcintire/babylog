@@ -8,6 +8,8 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { Timestamp } from "firebase/firestore";
 import {
+  breastSessionDelta,
+  countLatchedBreastSessions,
   dayKeyOf,
   dayKeysInRange,
   deltaForEvent,
@@ -60,20 +62,19 @@ test("dayKeysInRange returns single key for same-day range", () => {
   assert.deepStrictEqual(dayKeysInRange(start, end), ["2026-04-25"]);
 });
 
-test("deltaForEvent: breast_feed (latched)", () => {
-  const d = deltaForEvent({ type: "breast_feed", outcome: "latched_fed" });
-  assert.deepStrictEqual(d, { feeds: 1, breast_feeds: 1 });
-});
-
-test("deltaForEvent: breast_feed without outcome still counts", () => {
-  // Old data may not carry an outcome; default to counting it.
-  const d = deltaForEvent({ type: "breast_feed" });
-  assert.deepStrictEqual(d, { feeds: 1, breast_feeds: 1 });
-});
-
-test("deltaForEvent: breast_feed with no_latch does NOT count as a feed", () => {
-  const d = deltaForEvent({ type: "breast_feed", outcome: "no_latch" });
-  assert.strictEqual(d, null, "no_latch must not increment feeds counter");
+test("deltaForEvent: breast_feed returns null (handled by session delta)", () => {
+  // breast_feed events are session-counted, not per-event. deltaForEvent
+  // returns null for any breast_feed; the session-aware caller computes
+  // the actual feeds/breast_feeds delta via breastSessionDelta().
+  assert.strictEqual(
+    deltaForEvent({ type: "breast_feed", outcome: "latched_fed" }),
+    null,
+  );
+  assert.strictEqual(
+    deltaForEvent({ type: "breast_feed", outcome: "no_latch" }),
+    null,
+  );
+  assert.strictEqual(deltaForEvent({ type: "breast_feed" }), null);
 });
 
 test("deltaForEvent: bottle_feed includes volume", () => {
@@ -156,6 +157,144 @@ test("splitSleepMinutes returns empty object for non-positive window", () => {
   const start = new Date(2026, 3, 25, 10, 0);
   const end = new Date(2026, 3, 25, 10, 0);
   assert.deepStrictEqual(splitSleepMinutes(start, end), {});
+});
+
+test("countLatchedBreastSessions: L+R latched at same time = 1 session", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const events: BabyEvent[] = [
+    evt("breast_feed", t, { outcome: "latched_fed", side: "left" }),
+    evt("breast_feed", new Date(t.getTime() + 1000), {
+      outcome: "latched_fed",
+      side: "right",
+    }),
+  ];
+  assert.strictEqual(countLatchedBreastSessions(events), 1);
+});
+
+test("countLatchedBreastSessions: both no_latch = 0 sessions", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const events: BabyEvent[] = [
+    evt("breast_feed", t, { outcome: "no_latch", side: "left" }),
+    evt("breast_feed", new Date(t.getTime() + 5000), {
+      outcome: "no_latch",
+      side: "right",
+    }),
+  ];
+  assert.strictEqual(countLatchedBreastSessions(events), 0);
+});
+
+test("countLatchedBreastSessions: one latched + one no_latch in session = 1", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const events: BabyEvent[] = [
+    evt("breast_feed", t, { outcome: "no_latch", side: "left" }),
+    evt("breast_feed", new Date(t.getTime() + 5000), {
+      outcome: "latched_fed",
+      side: "right",
+    }),
+  ];
+  assert.strictEqual(countLatchedBreastSessions(events), 1);
+});
+
+test("countLatchedBreastSessions: two separate sessions hours apart", () => {
+  const events: BabyEvent[] = [
+    evt("breast_feed", new Date(2026, 3, 28, 10, 0), {
+      outcome: "latched_fed",
+    }),
+    evt("breast_feed", new Date(2026, 3, 28, 14, 0), {
+      outcome: "latched_fed",
+    }),
+  ];
+  assert.strictEqual(countLatchedBreastSessions(events), 2);
+});
+
+test("breastSessionDelta: insert latched alone in session = +1", () => {
+  const newEvent = evt("breast_feed", new Date(2026, 3, 28, 10, 0), {
+    outcome: "latched_fed",
+  });
+  const delta = breastSessionDelta(
+    { kind: "insert", event: newEvent },
+    [],
+  );
+  assert.strictEqual(delta, 1);
+});
+
+test("breastSessionDelta: insert second latched in same session = 0", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const existing = evt("breast_feed", t, {
+    outcome: "latched_fed",
+    side: "left",
+  });
+  const newEvent = evt("breast_feed", new Date(t.getTime() + 2000), {
+    outcome: "latched_fed",
+    side: "right",
+  });
+  const delta = breastSessionDelta(
+    { kind: "insert", event: newEvent },
+    [existing],
+  );
+  assert.strictEqual(delta, 0, "session already counted");
+});
+
+test("breastSessionDelta: insert latched into existing no_latch session = +1", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const existing = evt("breast_feed", t, {
+    outcome: "no_latch",
+    side: "left",
+  });
+  const newEvent = evt("breast_feed", new Date(t.getTime() + 5000), {
+    outcome: "latched_fed",
+    side: "right",
+  });
+  const delta = breastSessionDelta(
+    { kind: "insert", event: newEvent },
+    [existing],
+  );
+  assert.strictEqual(delta, 1);
+});
+
+test("breastSessionDelta: insert no_latch alone in session = 0", () => {
+  const newEvent = evt("breast_feed", new Date(2026, 3, 28, 10, 0), {
+    outcome: "no_latch",
+  });
+  const delta = breastSessionDelta(
+    { kind: "insert", event: newEvent },
+    [],
+  );
+  assert.strictEqual(delta, 0);
+});
+
+test("breastSessionDelta: delete the only latched event in session = -1", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const target = evt("breast_feed", t, {
+    outcome: "latched_fed",
+    side: "left",
+  });
+  const otherNoLatch = evt("breast_feed", new Date(t.getTime() + 3000), {
+    outcome: "no_latch",
+    side: "right",
+  });
+  const delta = breastSessionDelta(
+    { kind: "delete", event: target },
+    [otherNoLatch],
+  );
+  assert.strictEqual(delta, -1);
+});
+
+test("breastSessionDelta: delete one of two latched events = 0", () => {
+  const t = new Date(2026, 3, 28, 10, 0);
+  const target = evt("breast_feed", t, {
+    outcome: "latched_fed",
+    side: "left",
+  });
+  const other = evt("breast_feed", new Date(t.getTime() + 3000), {
+    outcome: "latched_brief",
+    side: "right",
+  });
+  const delta = breastSessionDelta(
+    { kind: "delete", event: target },
+    [other],
+  );
+  assert.strictEqual(delta, 0);
 });
 
 test("summaryFromDayEvents accumulates day's events with given sleep minutes", () => {

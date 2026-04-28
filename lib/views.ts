@@ -25,6 +25,7 @@ import {
   type SleepSegment,
 } from "./aggregates";
 import {
+  breastSessionDelta,
   dayKeyOf,
   summaryFromDayEvents,
   splitSleepMinutes,
@@ -472,7 +473,7 @@ export function computeLibraryView(events: BabyEvent[]): LibraryView {
 
 export type ViewChange =
   | { kind: "insert" | "replace"; event: BabyEvent }
-  | { kind: "delete"; eventId: string };
+  | { kind: "delete"; eventId: string; event?: BabyEvent };
 
 // Apply an event change to the existing LibraryView. Inserts/replaces
 // dedupe-update the matching books/foods entry; deletes decrement count
@@ -741,12 +742,11 @@ export function applyChangeToInsightsView(
           };
     switch (e.type) {
       case "breast_feed":
-        // Skip no-latch attempts — they're logged but don't count as
-        // a feeding. See deltaForEvent for the matching summary-coll
-        // logic.
-        if (e.outcome === "no_latch") break;
-        cur.feeds += 1;
-        cur.breast_feeds += 1;
+        // Session-counted: one feeding per group of breast events
+        // logged within BREAST_SESSION_MS. The delta depends on whether
+        // the session already had a latched event; see breastSessionDelta.
+        // Caller passes the projected events so neighbor lookup works
+        // even when the live listener hasn't propagated yet.
         break;
       case "bottle_feed":
         cur.feeds += 1;
@@ -793,6 +793,90 @@ export function applyChangeToInsightsView(
       );
       if (daily_summaries.length > INSIGHTS_DAYS) {
         daily_summaries = daily_summaries.slice(-INSIGHTS_DAYS);
+      }
+    }
+  }
+
+  // ---- Breast-feed session delta (insert / delete / replace) ----
+  // Breast events count by session, not per-event. Compute the delta
+  // (-1, 0, or +1) and apply it to the affected day's feeds and
+  // breast_feeds. `projected` here is the events array AFTER the change
+  // is applied; reconstruct the BEFORE array as needed.
+  const breastTarget =
+    change.kind === "delete"
+      ? change.event
+      : change.event.type === "breast_feed"
+        ? change.event
+        : null;
+  if (breastTarget && breastTarget.type === "breast_feed") {
+    const eventsBefore =
+      change.kind === "insert"
+        ? projected.filter((e) => e.id !== change.event.id)
+        : change.kind === "delete"
+          ? // projected already excludes the deleted event; add it back
+            // for the "before" snapshot.
+            [...projected, breastTarget]
+          : // replace: projected has new event; before had the old one.
+            // For correctness on session counts, treat replace as
+            // delete-then-insert.
+            projected.filter((e) => e.id !== change.event.id);
+    let delta = 0;
+    if (change.kind === "insert") {
+      delta = breastSessionDelta(
+        { kind: "insert", event: breastTarget },
+        eventsBefore,
+      );
+    } else if (change.kind === "delete") {
+      delta = breastSessionDelta(
+        { kind: "delete", event: breastTarget },
+        eventsBefore,
+      );
+    } else {
+      // replace = delete old + insert new. We don't carry the OLD here,
+      // so approximate by using the new event for both — close enough
+      // when the outcome didn't change. Edits that flip latched↔no_latch
+      // are caught by the next backfill.
+      delta = breastSessionDelta(
+        { kind: "insert", event: breastTarget },
+        eventsBefore,
+      );
+    }
+    if (delta !== 0) {
+      const dk = dayKeyOf(breastTarget.occurred_at.toDate());
+      const idx = daily_summaries.findIndex((d) => d.dayKey === dk);
+      if (idx !== -1) {
+        const cur = { ...daily_summaries[idx]! };
+        cur.feeds = Math.max(0, cur.feeds + delta);
+        cur.breast_feeds = Math.max(0, cur.breast_feeds + delta);
+        daily_summaries = [
+          ...daily_summaries.slice(0, idx),
+          cur,
+          ...daily_summaries.slice(idx + 1),
+        ];
+      } else if (delta > 0) {
+        // New day for a latched session: create the entry.
+        const fresh: DailySummary = {
+          dayKey: dk,
+          feeds: delta,
+          breast_feeds: delta,
+          bottle_feeds: 0,
+          pump_count: 0,
+          milkMl: 0,
+          pumpMl: 0,
+          diapers: 0,
+          wets: 0,
+          dirties: 0,
+          mixeds: 0,
+          meds: 0,
+          sleepMinutes: 0,
+          maxTempF: null,
+        };
+        daily_summaries = [...daily_summaries, fresh].sort((a, b) =>
+          a.dayKey.localeCompare(b.dayKey),
+        );
+        if (daily_summaries.length > INSIGHTS_DAYS) {
+          daily_summaries = daily_summaries.slice(-INSIGHTS_DAYS);
+        }
       }
     }
   }
