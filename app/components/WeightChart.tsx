@@ -40,16 +40,19 @@ export function WeightChart({
   const [hovered, setHovered] = useState<WeightPoint | null>(null);
   const [showCurves] = useBoolPref("showGrowthCurves");
   const [logOpen, setLogOpen] = useState(false);
-  // Skip the dedicated weights listener entirely when the view is loaded —
+  // Skip the dedicated weights listener entirely when views are enabled —
   // weights live inside insightsView.weights as a single small array.
-  const useView = VIEWS_FLAG_ENABLED && insightsView != null;
-  const weightEvents = useAllWeights(!useView);
+  // Important: gate on VIEWS_FLAG_ENABLED, not (flag && view-loaded), so
+  // we don't briefly attach a 200-doc listener during the initial view-
+  // loading window on app boot.
+  const useView = VIEWS_FLAG_ENABLED;
+  const weightEvents = useAllWeights(!VIEWS_FLAG_ENABLED);
   const baby = useBaby();
 
   const points = useMemo<WeightPoint[]>(() => {
     const weights: WeightPoint[] = [];
     if (useView && insightsView) {
-      for (const w of insightsView.weights) {
+      for (const w of insightsView.weights ?? []) {
         const d = new Date(w.at);
         const dayOfLife =
           (d.getTime() - baby.birthdate.getTime()) / (1000 * 60 * 60 * 24);

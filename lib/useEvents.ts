@@ -470,23 +470,35 @@ async function writeSleepEndWithSummary(
   currentEvents?: BabyEvent[],
 ): Promise<string> {
   // Find the matching open sleep_start: most recent sleep_start with no
-  // sleep_end after it. Read just enough recent events to pair them.
-  const recentQ = query(
-    eventsCollection(hid),
-    orderBy("occurred_at", "desc"),
-    limit(50),
-  );
-  const recent = await getDocs(recentQ);
+  // sleep_end after it. Walk currentEvents (which is the live listener's
+  // newest-first array, typically 50 events). Avoids a 50-doc query that
+  // used to fire on every sleep_end. Fallback to a server query only if
+  // the caller didn't pass currentEvents (rare write paths).
   let openStartAt: Date | null = null;
-  // Walk newest-first; first sleep_end means our search target is older
-  // than that and unrelated.
-  for (const d of recent.docs) {
-    const data = d.data() as { type: string; deleted?: boolean; occurred_at: Timestamp };
-    if (data.deleted) continue;
-    if (data.type === "sleep_end") break;
-    if (data.type === "sleep_start") {
-      openStartAt = data.occurred_at.toDate();
-      break;
+  if (currentEvents && currentEvents.length > 0) {
+    for (const e of currentEvents) {
+      if (e.deleted) continue;
+      if (e.type === "sleep_end") break;
+      if (e.type === "sleep_start") {
+        openStartAt = e.occurred_at.toDate();
+        break;
+      }
+    }
+  } else {
+    const recentQ = query(
+      eventsCollection(hid),
+      orderBy("occurred_at", "desc"),
+      limit(50),
+    );
+    const recent = await getDocs(recentQ);
+    for (const d of recent.docs) {
+      const data = d.data() as { type: string; deleted?: boolean; occurred_at: Timestamp };
+      if (data.deleted) continue;
+      if (data.type === "sleep_end") break;
+      if (data.type === "sleep_start") {
+        openStartAt = data.occurred_at.toDate();
+        break;
+      }
     }
   }
 
@@ -1105,24 +1117,38 @@ async function updateEventWithSummary(
   const newType = (patch.type ?? old.type) as string;
 
   // Sleep_end edits: invert old minute map, recompute new window using the
-  // most recent open sleep_start, write new map onto the event.
+  // most recent open sleep_start, write new map onto the event. Same
+  // event-array-walk optimization as writeSleepEndWithSummary — avoids
+  // a 50-doc query when the caller passed currentEvents.
   if (newType === "sleep_end" && old.type === "sleep_end") {
     const oldMap = old.sleep_minutes_by_day ?? {};
-    const recentQ = query(
-      eventsCollection(hid),
-      orderBy("occurred_at", "desc"),
-      limit(50),
-    );
-    const recent = await getDocs(recentQ);
     let openStartAt: Date | null = null;
-    for (const d of recent.docs) {
-      if (d.id === id) continue;
-      const data = d.data() as { type: string; deleted?: boolean; occurred_at: Timestamp };
-      if (data.deleted) continue;
-      if (data.type === "sleep_end") break;
-      if (data.type === "sleep_start") {
-        openStartAt = data.occurred_at.toDate();
-        break;
+    if (currentEvents && currentEvents.length > 0) {
+      for (const e of currentEvents) {
+        if (e.id === id) continue;
+        if (e.deleted) continue;
+        if (e.type === "sleep_end") break;
+        if (e.type === "sleep_start") {
+          openStartAt = e.occurred_at.toDate();
+          break;
+        }
+      }
+    } else {
+      const recentQ = query(
+        eventsCollection(hid),
+        orderBy("occurred_at", "desc"),
+        limit(50),
+      );
+      const recent = await getDocs(recentQ);
+      for (const d of recent.docs) {
+        if (d.id === id) continue;
+        const data = d.data() as { type: string; deleted?: boolean; occurred_at: Timestamp };
+        if (data.deleted) continue;
+        if (data.type === "sleep_end") break;
+        if (data.type === "sleep_start") {
+          openStartAt = data.occurred_at.toDate();
+          break;
+        }
       }
     }
     const newMap: Record<string, number> =

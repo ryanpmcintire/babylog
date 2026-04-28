@@ -188,7 +188,13 @@ export function explicitSleepWindows(
   events: BabyEvent[],
   now: Date = new Date(),
 ): SleepWindow[] {
-  const chrono = [...events].reverse();
+  // Sort defensively: callers in the live UI pass newest-first arrays,
+  // but the backfill reads events from a Firestore .get() with no order
+  // guarantee. Without this sort, sleep_starts get paired with arbitrary
+  // later events and produce overlapping multi-day windows.
+  const chrono = [...events].sort(
+    (a, b) => a.occurred_at.toMillis() - b.occurred_at.toMillis(),
+  );
   const windows: SleepWindow[] = [];
   let open: Date | null = null;
   for (const e of chrono) {

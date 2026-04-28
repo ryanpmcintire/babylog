@@ -71,14 +71,15 @@ export function Trends({
   //   1. insightsView is loaded — ZERO additional reads, just slice.
   //   2. summaries flag is on — ~days reads (one per day in the window).
   //   3. fall through to raw-event bucketing (legacy path).
+  // Gate fallback fetches on VIEWS_FLAG_ENABLED itself (not view-loaded)
+  // so we don't briefly attach a 200-doc listener during the initial
+  // view-loading window on app boot.
   const { summaries } = useDailySummariesRange(
-    VIEWS_FLAG_ENABLED && insightsView ? 0 : days,
+    VIEWS_FLAG_ENABLED ? 0 : days,
   );
   const { events, loadingMore } = useExtendedEvents(
-    SUMMARIES_FLAG_ENABLED || (VIEWS_FLAG_ENABLED && insightsView)
-      ? []
-      : liveEvents,
-    SUMMARIES_FLAG_ENABLED || (VIEWS_FLAG_ENABLED && insightsView) ? 0 : days,
+    SUMMARIES_FLAG_ENABLED || VIEWS_FLAG_ENABLED ? [] : liveEvents,
+    SUMMARIES_FLAG_ENABLED || VIEWS_FLAG_ENABLED ? 0 : days,
   );
 
   const buckets = useMemo(() => {

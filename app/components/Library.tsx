@@ -37,11 +37,20 @@ export function Library({
   );
   const foodsUnlocked = ageDays >= FOOD_UNLOCK_DAYS;
 
-  // When the library view is loaded, render straight from its deduped
-  // arrays. No raw-event listeners attached.
-  const useView = VIEWS_FLAG_ENABLED && libraryView != null;
-  const bookEvents = useEventsByType("book_read", useView ? 0 : 200);
-  const foodEvents = useEventsByType("food_tried", useView ? 0 : 200);
+  // When views are enabled, render from libraryView's deduped arrays.
+  // Gate the fallback listener on VIEWS_FLAG_ENABLED itself (not
+  // libraryView-loaded), otherwise the listener briefly attaches during
+  // the boot-time loading window and pulls 400 docs (200 books + 200
+  // foods) before the view arrives.
+  const useView = VIEWS_FLAG_ENABLED;
+  const bookEvents = useEventsByType(
+    "book_read",
+    VIEWS_FLAG_ENABLED ? 0 : 200,
+  );
+  const foodEvents = useEventsByType(
+    "food_tried",
+    VIEWS_FLAG_ENABLED ? 0 : 200,
+  );
 
   const { books, foods } = useMemo(() => {
     if (useView && libraryView) {

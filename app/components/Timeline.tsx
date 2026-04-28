@@ -44,14 +44,14 @@ export function Timeline({
   events: BabyEvent[];
   insightsView?: import("@/lib/views").InsightsView | null;
 }) {
-  const useView = VIEWS_FLAG_ENABLED && insightsView != null;
+  // Gate fallback fetches on VIEWS_FLAG_ENABLED itself (not view-loaded
+  // state) so we don't briefly fire useExtendedEvents during the initial
+  // view-loading window on app boot.
+  const useView = VIEWS_FLAG_ENABLED;
+  const viewLoaded = VIEWS_FLAG_ENABLED && insightsView != null;
   const [days, setDays] = useState(7);
   const [tick, setTick] = useState(() => Date.now());
   const [editingId, setEditingId] = useState<string | null>(null);
-  // When views are on, the markers + sleep segments come from insightsView
-  // (already loaded as part of the single insights doc read). Skip the
-  // useExtendedEvents fetch entirely — that was the next-biggest read leak
-  // after eliminating useRecentEvents.
   const extended = useExtendedEvents(useView ? [] : liveEvents, useView ? 0 : days);
   const events = useView ? liveEvents : extended.events;
   const loadingMore = useView ? false : extended.loadingMore;
@@ -81,9 +81,9 @@ export function Timeline({
   }, [days, events.length]);
 
   const { sleepByDay, markersByDay } = useMemo(() => {
-    let sleeps: SleepSegment[];
-    let markers: Marker[];
-    if (useView && insightsView) {
+    let sleeps: SleepSegment[] = [];
+    let markers: Marker[] = [];
+    if (viewLoaded && insightsView) {
       const dayKeys = new Set(dayList.map((d) => d.key));
       sleeps = (insightsView.sleep_segments ?? []).filter((s) =>
         dayKeys.has(s.dayKey),
@@ -91,10 +91,12 @@ export function Timeline({
       markers = (insightsView.markers ?? [])
         .filter((m) => m.kind !== "pump")
         .filter((m) => dayKeys.has(m.dayKey));
-    } else {
+    } else if (!useView) {
       sleeps = buildSleepSegments(events, now, { inferBufferMin: 10 });
       markers = buildMarkers(events).filter((m) => m.kind !== "pump");
     }
+    // viewLoaded false but useView true → empty arrays (still loading);
+    // user briefly sees an empty timeline until insightsView resolves.
     const sMap = new Map<string, SleepSegment[]>();
     const mMap = new Map<string, Marker[]>();
     for (const s of sleeps) {
@@ -112,8 +114,10 @@ export function Timeline({
   }, [useView, insightsView, events, dayList]);
 
   if (!useView && events.length === 0) return null;
+  // When views are on and the view is loaded but truly empty, hide.
+  // While loading, render the chrome with empty rows rather than null.
   if (
-    useView &&
+    viewLoaded &&
     (insightsView?.markers?.length ?? 0) === 0 &&
     (insightsView?.sleep_segments?.length ?? 0) === 0
   )
