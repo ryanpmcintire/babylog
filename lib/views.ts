@@ -694,12 +694,44 @@ export function applyChangeToInsightsView(
   if (touchedDays.size > 0) {
     const live = projected.filter((e) => !e.deleted);
     const recomputedAll = buildSleepSegments(live, now, { inferBufferMin: 10 });
-    const recomputedTouched = recomputedAll.filter((s) =>
-      touchedDays.has(s.dayKey),
+    // Only blow away an existing day's segments if `projected` actually
+    // covers that day — otherwise an event write whose `projected` array
+    // (HomeView's 50 recents + currentEvents) doesn't span back far enough
+    // will silently delete legitimate sleep_segments and leave the day blank.
+    // Coverage requires events both before the day starts AND after it
+    // ends, so inferredSleepWindows can see awake intervals bracketing it.
+    const safelyRecomputable = new Set<string>();
+    for (const dayKey of touchedDays) {
+      const [y, m, d] = dayKey.split("-").map(Number);
+      const dayStart = new Date(y!, (m ?? 1) - 1, d ?? 1).getTime();
+      const dayEnd = dayStart + 24 * 60 * 60 * 1000;
+      let hasBefore = false;
+      let hasAfter = false;
+      for (const e of live) {
+        const t = e.occurred_at.toDate().getTime();
+        if (t < dayStart) hasBefore = true;
+        if (t >= dayEnd) hasAfter = true;
+        if (hasBefore && hasAfter) break;
+      }
+      // Also safe if "after" extends to "now" because the day is today and
+      // projected has any events on the day itself.
+      if (!hasAfter && dayEnd > now.getTime()) {
+        for (const e of live) {
+          const t = e.occurred_at.toDate().getTime();
+          if (t >= dayStart && t < dayEnd) {
+            hasAfter = true;
+            break;
+          }
+        }
+      }
+      if (hasBefore && hasAfter) safelyRecomputable.add(dayKey);
+    }
+    const recomputedSafe = recomputedAll.filter((s) =>
+      safelyRecomputable.has(s.dayKey),
     );
     sleep_segments = [
-      ...sleep_segments.filter((s) => !touchedDays.has(s.dayKey)),
-      ...recomputedTouched,
+      ...sleep_segments.filter((s) => !safelyRecomputable.has(s.dayKey)),
+      ...recomputedSafe,
     ];
   }
 

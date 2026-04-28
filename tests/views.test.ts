@@ -8,12 +8,15 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { Timestamp } from "firebase/firestore";
 import {
+  applyChangeToInsightsView,
   computeHomeView,
   computeInsightsView,
   computeLibraryView,
   PREDICTION_LOOKBACK,
   RECENT_EVENTS_LIMIT,
 } from "../lib/views";
+import type { InsightsView } from "../lib/views";
+import type { SleepSegment } from "../lib/aggregates";
 import type { BabyEvent } from "../lib/events";
 
 let nextId = 0;
@@ -247,4 +250,116 @@ test("computeLibraryView: dedupes foods and accumulates reactions", () => {
   assert.strictEqual(avocado.reactions.loved, 2);
   assert.strictEqual(avocado.reactions.liked, 1);
   assert.ok(avocado.first_try_at);
+});
+
+test("applyChangeToInsightsView preserves existing sleep_segments when projected lacks coverage for an adjacent day", () => {
+  // Regression: when an event is written, applyChangeToInsightsView marks
+  // prevDay/sameDay/nextDay as touched and recomputes sleep_segments for
+  // them. If `projected` (HomeView's 50 recents + currentEvents) doesn't
+  // span back far enough to cover prevDay's morning, the recompute
+  // produces no segments for that day — and the previous logic blindly
+  // replaced existing segments with the empty result, blanking earlier
+  // days' inferred sleep over time.
+  const existingSundayMorningSleep: SleepSegment[] = [
+    {
+      dayKey: "2026-04-26",
+      startMin: 0,
+      endMin: 540, // midnight to 9am
+      ongoing: false,
+      source: "inferred",
+    },
+  ];
+  const existing: InsightsView = {
+    daily_summaries: [],
+    markers: [],
+    weights: [],
+    sleep_segments: existingSundayMorningSleep,
+  };
+  // Change event on Monday — touches Sun/Mon/Tue. `projected` only has
+  // Monday events, no Sunday context.
+  const changeEvent = evt("breast_feed", new Date(2026, 3, 27, 10, 0), {
+    outcome: "latched_fed",
+    side: "left",
+  });
+  const projected: BabyEvent[] = [
+    changeEvent,
+    evt("breast_feed", new Date(2026, 3, 27, 7, 0), {
+      outcome: "latched_fed",
+    }),
+    evt("diaper_wet", new Date(2026, 3, 27, 8, 0)),
+  ];
+  const result = applyChangeToInsightsView(
+    existing,
+    { kind: "insert", event: changeEvent },
+    projected,
+    new Date(2026, 3, 27, 10, 0),
+  );
+  const sundaySegments = result.sleep_segments.filter(
+    (s) => s.dayKey === "2026-04-26",
+  );
+  assert.strictEqual(
+    sundaySegments.length,
+    1,
+    "Sunday's existing sleep segments must be preserved when projected can't see Sunday morning",
+  );
+  assert.strictEqual(sundaySegments[0]!.endMin, 540);
+});
+
+test("applyChangeToInsightsView still recomputes the same-day sleep_segments when projected covers it", () => {
+  // Sanity: the safety check shouldn't break the normal case. When
+  // projected has events bracketing the touched day, the recompute should
+  // proceed and replace existing data for that day.
+  const existing: InsightsView = {
+    daily_summaries: [],
+    markers: [],
+    weights: [],
+    sleep_segments: [
+      {
+        dayKey: "2026-04-27",
+        startMin: 0,
+        endMin: 60,
+        ongoing: false,
+        source: "inferred",
+      },
+    ],
+  };
+  // Change event mid-day Monday with events bracketing midnight on
+  // both sides — Sun night + Mon morning + Mon afternoon.
+  const changeEvent = evt("breast_feed", new Date(2026, 3, 27, 14, 0), {
+    outcome: "latched_fed",
+  });
+  const projected: BabyEvent[] = [
+    evt("breast_feed", new Date(2026, 3, 26, 22, 0), {
+      outcome: "latched_fed",
+    }),
+    evt("breast_feed", new Date(2026, 3, 27, 3, 0), {
+      outcome: "latched_fed",
+    }),
+    evt("breast_feed", new Date(2026, 3, 27, 8, 0), {
+      outcome: "latched_fed",
+    }),
+    changeEvent,
+    evt("breast_feed", new Date(2026, 3, 28, 1, 0), {
+      outcome: "latched_fed",
+    }),
+  ];
+  const result = applyChangeToInsightsView(
+    existing,
+    { kind: "insert", event: changeEvent },
+    projected,
+    new Date(2026, 3, 28, 2, 0),
+  );
+  const mondaySegments = result.sleep_segments.filter(
+    (s) => s.dayKey === "2026-04-27",
+  );
+  // Recompute happened — the bogus 0-60min segment was replaced with
+  // genuine inferred sleep windows from the projected events.
+  const hasBogus = mondaySegments.some(
+    (s) => s.startMin === 0 && s.endMin === 60,
+  );
+  assert.ok(!hasBogus, "Monday's stale segment should have been replaced");
+  assert.ok(
+    mondaySegments.length > 0,
+    "expected genuine inferred Monday sleep segments to be computed",
+  );
 });
