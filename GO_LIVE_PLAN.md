@@ -57,18 +57,26 @@ What's hardcoded for single-household / single-baby use:
   means parents who forget to log wake-ups still get accurate sleep
   totals. Differentiator.
 - **Session-counted nursing** (5-minute window across sides). Other
-  trackers count L+R as 2 feedings. Babylog counts 1.
+  trackers count L+R as 2 feedings. Babylog counts 1. Solves a
+  specific Baby Daybook pain point ("can't track switching breasts
+  in one feed").
 - **AAP fever guidance baked into the temperature card.** Not just a
   chart — actual "call the pediatrician at this threshold for this
   age" decision support. Differentiator if kept medically accurate.
 - **Cost-architected backend.** Every screen is one doc read
   cold-cache. Genuinely cheap unit economics, fast UI.
+- **Web/desktop app.** Every major competitor (Huckleberry, Glow,
+  Baby Daybook, Baby Tracker, NIGHP) is mobile-only. Repeated
+  complaint in r/beyondthebump reviews. Babylog already has this —
+  market it explicitly: "the only baby tracker you can use from
+  your laptop."
 
 ### Table-stakes babylog is missing
 
 - Account creation flow (currently allowlist + email-link only).
 - Multiple babies per household (twins).
-- Photo / video attachments (milestones, first foods).
+- Photo / video attachments (milestones, first foods, poop/rash
+  documentation — repeatedly mentioned in reviews).
 - Vaccination / immunization schedule with reminders.
 - Growth percentile charts for height + head circumference (weight
   curves are optional already).
@@ -77,9 +85,27 @@ What's hardcoded for single-household / single-baby use:
 - Account deletion in-app (App Store requirement).
 - Apple HealthKit / Google Health Connect integration.
 - Onboarding tutorial / empty states.
+- **Live "ongoing event" sync.** Start a feed/nap on phone A,
+  see/stop it from phone B with a persistent notification on both
+  devices. Huckleberry has it but flaky; Baby Daybook does it best.
+  Our dual-write architecture already gives near-real-time — the
+  gap is UX (the in-progress card on both phones), not infra.
+- **Customizable day-start time** (run the day 7am→7am instead of
+  midnight, so night sleep is one continuous block).
+- **Configurable home screen** (let parents pin only what they log).
+- **Voice integration** ("Hey Google / Hey Siri, log a wet diaper").
+  Baby Daybook has Google Assistant only. None of the major iOS
+  apps support voice. Highest-leverage at 3am one-handed.
+- **Apple Watch app.** Mentioned as the deciding factor for at
+  least one Baby Tracker user.
 
 ### Differentiating directions worth considering
 
+- **Sleep-prediction notification ("Sweet spot for next nap").**
+  Huckleberry's killer feature — repeatedly the *only* reason users
+  stay subscribed. Babylog already infers sleep from gaps; productize
+  it as a push notification at the predicted next-nap window. Free
+  tier, drives Premium+ upgrades for AI sleep coaching.
 - AI summarization layer (matches Huckleberry's Berry chat). Feed the
   dual-write data into Claude/OpenAI: "is her sleep pattern normal
   for 6 weeks?"
@@ -88,34 +114,53 @@ What's hardcoded for single-household / single-baby use:
 
 ## 3. Free vs Paid split (recommended)
 
+**Pricing context from r/beyondthebump reviews:** Baby Daybook at
+$13/yr family-shared is praised. Glow's per-user $48/yr is called
+"borderline offensively anticonsumer." Huckleberry's $120/yr is
+tolerated only because of the killer sleep-prediction feature; many
+users ride the free tier indefinitely. **CSV export must be free** —
+gating it puts babylog in the anti-consumer bucket. **Per-family
+pricing, not per-user** — both parents share one sub.
+
 ### Free tier — generous enough to be the default
 - All event types, unlimited logging.
-- 1 caregiver, 1 baby.
-- Live cross-device sync.
+- Up to 2 caregivers (covers most couples; nannies/grandparents
+  push to Premium).
+- 1 baby.
+- Live cross-device sync, including in-progress event handoff.
 - All charts, history, edit window, markers, sleep inference.
+- Sleep-prediction "sweet spot" notification (the Huckleberry
+  killer feature, given away free).
 - 30-day data window for charts (older data still stored, just not
   charted).
-- CSV export.
+- CSV / JSON export.
 
-### Premium ($7.99/mo or $39.99/yr — undercuts Huckleberry, beats Glow's $90)
+### Premium — recommended price: $29.99/yr or $4.99/mo, family-shared
+Undercuts Huckleberry by 4×, undercuts Glow per-couple by 3×, and
+sits just above Baby Daybook's $13/yr while bundling more. Lifetime
+option at $49 is worth testing — it kills the "renewal fatigue"
+objection that several reviewers raised.
 - Unlimited caregivers (grandparents, nanny).
 - Multiple babies (twins).
 - Unlimited chart history.
 - PDF pediatrician report export.
 - Apple HealthKit / Google Health Connect integration.
-- Push notification reminders.
+- Push notification reminders (time-of-day, not interval-since-last
+  — direct response to a Baby Daybook complaint).
 - Apple Watch app (if/when built).
 - Photo attachments (10 GB).
 - Lock-screen widget on iOS.
 
-### Premium+ ($14.99/mo or $79.99/yr — Huckleberry-Premium tier)
-- AI summaries / chat.
-- Sleep coaching plans.
+### Premium+ — $9.99/mo or $79.99/yr (Huckleberry-Premium tier)
+- AI summaries / chat ("is her sleep pattern normal for 6 weeks?").
+- Personalized sleep-coaching plans.
 - Doula / lactation-consultant marketplace integration (revenue share).
 
 **Conversion-rate context:** freemium median ~2%, hard-paywall median
-~12%, health & fitness 4–12%. Realistic plan: 4% conversion at
-$40/yr → ARPU ~$1.60 / registered user / yr; per-paying-user $40/yr.
+~12%, health & fitness 4–12%. At a $30/yr Premium price: 4% conversion
+→ ARPU $1.20 / registered user / yr; per-paying-user $30/yr. Lower
+ARPU than the original $40 plan but materially better expected
+conversion because we're below Baby Daybook's price point.
 
 ## 4. Server cost model (per active family per month)
 
@@ -197,10 +242,19 @@ Each phase needs a comprehensive implementation spec before build.
   (enough to clear Apple's 4.2 "wrapper-rejection" bar).
 - App Store + Play Store listings with ASO keyword research.
 - Marketing site (`babylog.app` or similar) — separate static site.
+- **Market the web app in parallel with the mobile launch.** Don't
+  treat the browser version as a leftover — it's a unique
+  category position. Tagline: "the only baby tracker you can use
+  from your laptop."
 
 ### Phase 3 — billing + launch (2–3 weeks)
 - RevenueCat for IAP, Stripe for web.
 - Free / Premium / Premium+ tiers with 7-day trial on annual.
+- **Voice integration: Siri Shortcuts on iOS, Google Assistant on
+  Android.** "Hey Google, log a wet diaper." None of the major iOS
+  competitors have this; Baby Daybook has Android only. Highest
+  one-handed-use value at 3am. Could be Free or Premium — leaning
+  Free as a viral hook.
 - Soft launch via Reddit, Pinterest, week-of-life parenting groups.
 - Watch retention (D1, D7, D30). Tracker-app D30 is brutal.
 
